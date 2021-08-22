@@ -1,6 +1,8 @@
 import tensorflow as tf
 from tensorflow.keras import layers
 
+from globals import IMG_SIZE, CATEGORIES_ANGLE, CATEGORIES_KANJI
+
 
 class ResConv2D(layers.Layer):
     """
@@ -42,21 +44,21 @@ class ResConv2D(layers.Layer):
         return x
 
 
-def build_regulariser(image_size: int, angle_categories: int):
-    l_input = layers.Input(shape=(image_size, image_size, 1))
+def build_regulariser() -> tf.keras.Model:
+    l_input = layers.Input(shape=(IMG_SIZE, IMG_SIZE, 1))
     l_next = layers.Conv2D(16, 3, activation="relu", name="conv1")(l_input)
     l_next = layers.Conv2D(64, 3, activation="relu", name="conv2")(l_next)
     l_next = layers.MaxPool2D()(l_next)
     l_next = layers.Flatten()(l_next)
     l_next = layers.Dense(64, activation="relu", name="dense1")(l_next)
-    l_angle = layers.Dense(angle_categories, activation="softmax")(l_next)
+    l_angle = layers.Dense(CATEGORIES_ANGLE, activation="softmax")(l_next)
     l_size = layers.Dense(1)(l_next)
     model = tf.keras.Model(inputs=[l_input], outputs=[l_angle, l_size])
     return model
 
 
-def build_recogniser(depth: int, image_size: int, kanji_categories: int):
-    l_input = layers.Input(shape=(image_size, image_size, 1))
+def build_recogniser(depth: int) -> tf.keras.Model:
+    l_input = layers.Input(shape=(IMG_SIZE, IMG_SIZE, 1))
     l_next = layers.Conv2D(32, 5, activation="relu", padding="same", name="conv1")(l_input)
     l_next = layers.MaxPool2D()(l_next)
     for ii in range(depth):
@@ -64,6 +66,6 @@ def build_recogniser(depth: int, image_size: int, kanji_categories: int):
     l_next = layers.AveragePooling2D()(l_next)
     l_next = layers.Flatten()(l_next)
     l_next = layers.Dense(64, activation="relu", name="dense1")(l_next)
-    l_kanji = layers.Dense(kanji_categories, activation="softmax")(l_next)
+    l_kanji = layers.Dense(CATEGORIES_KANJI, activation="softmax")(l_next)
     model = tf.keras.Model(inputs=[l_input], outputs=[l_kanji], name="recogniser")
     return model

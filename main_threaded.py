@@ -10,6 +10,7 @@ import numpy as np
 
 import tensorflow as tf
 
+from globals import ALL_FONTS, ALL_KANJI, IMG_SIZE, CATEGORIES_KANJI, CATEGORIES_ANGLE
 from models import build_recogniser
 from rendering import gen_training_sample
 
@@ -86,13 +87,13 @@ class WriterThread(threading.Thread):
         self.__kanji = kanji
         self.halt = False
         self.lock = threading.Lock()
-        self.__fonts = load_fonts()
+        self.__fonts = ALL_FONTS
 
     def run(self):
         print("Writer is running...")
         while not self.halt:
             with self.lock:
-                img, i_kanji, fsize, angle = gen_training_sample(self.__kanji, self.__fonts, IMG_SIZE)
+                img, i_kanji, fsize, angle = gen_training_sample(self.__kanji, self.__fonts)
             sample = TrainingSample(
                 tf.convert_to_tensor(img),
                 i_kanji,
@@ -137,23 +138,9 @@ class ReaderThread(threading.Thread):
             self.fig.canvas.flush_events()
 
 
-def load_kanji():
-    with open("kanji.txt", "r") as fp:
-        return fp.read().strip()
-
-
-def load_fonts():
-    return list(Path("fonts").glob("*.otf"))
-
-
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 RED = (255, 0, 0)
-
-IMG_SIZE = 32
-
-CATEGORIES_ANGLE = 36
-CATEGORIES_KANJI = len(load_kanji())
 
 
 def build_dataset(buf: CircularBuffer):
@@ -183,7 +170,7 @@ def plot_sample_from_dataset(dataset):
 def main():
     do_training = True
 
-    all_kanji = list(load_kanji())
+    all_kanji = ALL_KANJI
     buf = CircularBuffer(250)
     dataset = build_dataset(buf).prefetch(100)
     prod = WriterThread(buf, all_kanji[:100])
@@ -191,7 +178,7 @@ def main():
     time.sleep(1)
     plot_sample_from_dataset(dataset)
 
-    m_kanji = build_recogniser(10, IMG_SIZE, CATEGORIES_KANJI)
+    m_kanji = build_recogniser(10)
     m_kanji.summary()
     m_kanji.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
 

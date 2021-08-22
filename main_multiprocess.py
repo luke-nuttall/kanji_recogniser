@@ -11,6 +11,7 @@ import numpy as np
 
 import tensorflow as tf
 
+from globals import ALL_FONTS, ALL_KANJI, IMG_SIZE, CATEGORIES_KANJI, CATEGORIES_ANGLE
 from models import build_recogniser
 from rendering import gen_training_sample
 
@@ -85,7 +86,7 @@ class WriterProcess(multiprocessing.Process):
         super().__init__()
         self.__kanji = kanji
         self.halt = multiprocessing.Value('b', False)  # shared memory
-        self.__fonts = load_fonts()
+        self.__fonts = ALL_FONTS
         self.conn_parent, self.conn_child = multiprocessing.Pipe()
 
     def run(self):
@@ -93,7 +94,7 @@ class WriterProcess(multiprocessing.Process):
         while not self.halt.value:
             while self.conn_child.poll():
                 self.__kanji = self.conn_child.recv()
-            val = gen_training_sample(self.__kanji, self.__fonts, IMG_SIZE)
+            val = gen_training_sample(self.__kanji, self.__fonts)
             self.conn_child.send(val)
         print("Writer Process has stopped")
 
@@ -146,23 +147,9 @@ class Writer:
         self.proc.set_kanji(values)
 
 
-def load_kanji():
-    with open("kanji.txt", "r") as fp:
-        return fp.read().strip()
-
-
-def load_fonts():
-    return list(Path("fonts").glob("*.otf"))
-
-
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 RED = (255, 0, 0)
-
-IMG_SIZE = 32
-
-CATEGORIES_ANGLE = 36
-CATEGORIES_KANJI = len(load_kanji())
 
 
 def build_dataset(buf: CircularBuffer):
@@ -192,7 +179,7 @@ def plot_sample_from_dataset(dataset):
 def main():
     do_training = True
 
-    all_kanji = list(load_kanji())
+    all_kanji = ALL_KANJI
     buf = CircularBuffer(100)
     dataset = build_dataset(buf)
     prod = Writer(buf, all_kanji[:100])
@@ -200,7 +187,7 @@ def main():
     time.sleep(5)
     plot_sample_from_dataset(dataset)
 
-    m_kanji = build_recogniser(10, IMG_SIZE, CATEGORIES_KANJI)
+    m_kanji = build_recogniser(10)
     m_kanji.summary()
     m_kanji.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
 

@@ -5,6 +5,7 @@ import numpy as np
 
 import tensorflow as tf
 
+from globals import ALL_FONTS, ALL_KANJI, IMG_SIZE, CATEGORIES_KANJI, CATEGORIES_ANGLE
 from models import build_recogniser
 from rendering import gen_training_sample
 
@@ -36,32 +37,18 @@ else:
     print("No GPU found. Running on CPU. This may be very, very slow.")
 
 
-def load_kanji():
-    with open("kanji.txt", "r") as fp:
-        return fp.read().strip()
-
-
-def load_fonts():
-    return list(Path("fonts").glob("*.otf"))
-
-
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 RED = (255, 0, 0)
 
-IMG_SIZE = 32
-
-CATEGORIES_ANGLE = 36
-CATEGORIES_KANJI = len(load_kanji())
-
 
 def dataset_gen(n_kanji=0):
-    all_kanji = load_kanji()
-    all_fonts = load_fonts()
+    all_kanji = ALL_KANJI
+    all_fonts = ALL_FONTS
     if n_kanji > 0:
         all_kanji = all_kanji[:n_kanji]
     while True:
-        img, i_kanji, fsize, angle = gen_training_sample(all_kanji, all_fonts, IMG_SIZE)
+        img, i_kanji, fsize, angle = gen_training_sample(all_kanji, all_fonts)
         image = tf.convert_to_tensor(img)
         angle = tf.one_hot(angle//10, CATEGORIES_ANGLE)  # angle //= 10
         yield image, i_kanji, fsize, angle
@@ -96,7 +83,7 @@ def main():
     dataset = build_dataset().prefetch(100)
     plot_sample_from_dataset(dataset)
 
-    m_kanji = build_recogniser(10, IMG_SIZE, CATEGORIES_KANJI)
+    m_kanji = build_recogniser(10)
     m_kanji.summary()
     m_kanji.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
 
@@ -130,7 +117,7 @@ def main():
     This is for showing the performance of the kanji classifier.
     '''
 
-    all_kanji = load_kanji()
+    all_kanji = ALL_KANJI
     n_rows = 4
     n_cols = 8
     scale = 2
