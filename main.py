@@ -5,9 +5,9 @@ import numpy as np
 
 import tensorflow as tf
 
-from globals import ALL_FONTS, ALL_KANJI, IMG_SIZE, CATEGORIES_KANJI, CATEGORIES_ANGLE
+from globals import ALL_FONTS, ALL_KANJI, IMG_SIZE, CATEGORIES_KANJI
 from models import build_recogniser
-from rendering import gen_training_sample
+from pipeline import Provider
 
 font_manager.fontManager.addfont("fonts/NotoSansJP-Regular.otf")
 plt.rc('font', family='Noto Sans JP')
@@ -37,33 +37,6 @@ else:
     print("No GPU found. Running on CPU. This may be very, very slow.")
 
 
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
-RED = (255, 0, 0)
-
-
-def dataset_gen(n_kanji=0):
-    all_kanji = ALL_KANJI
-    all_fonts = ALL_FONTS
-    if n_kanji > 0:
-        all_kanji = all_kanji[:n_kanji]
-    while True:
-        img, i_kanji, fsize, angle = gen_training_sample(all_kanji, all_fonts)
-        image = tf.convert_to_tensor(img)
-        angle = tf.one_hot(angle//10, CATEGORIES_ANGLE)  # angle //= 10
-        yield image, i_kanji, fsize, angle
-
-
-def build_dataset(n_kanji=0):
-    dataset = tf.data.Dataset.from_generator(dataset_gen,
-                                             (tf.float32, tf.int16, tf.int16, tf.int16),
-                                             (tf.TensorShape([IMG_SIZE, IMG_SIZE]), tf.TensorShape([]),
-                                              tf.TensorShape([]), tf.TensorShape([CATEGORIES_ANGLE])),
-                                             args=[n_kanji])
-    dataset = dataset
-    return dataset
-
-
 def plot_sample_from_dataset(dataset):
     fig = plt.figure(figsize=(8, 8))
     for ii, row in enumerate(dataset.take(16)):
@@ -80,7 +53,8 @@ def plot_sample_from_dataset(dataset):
 
 
 def main():
-    dataset = build_dataset().prefetch(100)
+    provider = Provider(ALL_KANJI[:100], ALL_FONTS)
+    dataset = provider.get_dataset()
     plot_sample_from_dataset(dataset)
 
     m_kanji = build_recogniser(10)
@@ -101,13 +75,15 @@ def main():
        generally more accurate.
     """
 
+    ds_kanji = dataset.map(lambda img, kanji, fsize, angle: (img, kanji))
+
     for n_kanji in range(100, CATEGORIES_KANJI, 100):
         print(f"Training on subset of {n_kanji} kanji:")
-        ds_kanji = build_dataset(n_kanji).map(lambda img, kanji, fsize, angle: (img, kanji))
+        provider.kanji = ALL_KANJI[:n_kanji]
         m_kanji.fit(ds_kanji.batch(8), steps_per_epoch=4000, epochs=1)
 
     print(f"Training on all {CATEGORIES_KANJI} kanji:")
-    ds_kanji = dataset.map(lambda img, kanji, fsize, angle: (img, kanji))
+    provider.kanji = ALL_KANJI
     m_kanji.fit(ds_kanji.batch(32), steps_per_epoch=2000, epochs=10)
 
     print(f"Saving model weights to: {save_path}")
@@ -117,7 +93,6 @@ def main():
     This is for showing the performance of the kanji classifier.
     '''
 
-    all_kanji = ALL_KANJI
     n_rows = 4
     n_cols = 8
     scale = 2
@@ -125,8 +100,8 @@ def main():
     for ii, (img, kanji, fsize, angle) in enumerate(dataset.take(n_rows * n_cols)):
         pred = m_kanji.predict(tf.reshape(img, (1, IMG_SIZE, IMG_SIZE, 1)))
 
-        ground_truth = all_kanji[kanji]
-        prediction = all_kanji[np.argmax(pred[0])]
+        ground_truth = ALL_KANJI[kanji]
+        prediction = ALL_KANJI[np.argmax(pred[0])]
         confidence = max(pred[0])
 
         ax: plt.Axes = fig.add_subplot(n_rows, n_cols, ii + 1)
@@ -186,8 +161,8 @@ def main():
     activations = np.transpose(hidden[0], axes=[2, 0, 1])
 
     pred = m_kanji.predict(inpt)
-    prediction = all_kanji[np.argmax(pred[0])]
-    ground_truth = all_kanji[kanji]
+    prediction = ALL_KANJI[np.argmax(pred[0])]
+    ground_truth = ALL_KANJI[kanji]
     print(f"Prediction: {prediction} ({prediction == ground_truth})")
 
     n_total = len(activations)

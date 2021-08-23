@@ -1,19 +1,15 @@
-import multiprocessing
-import threading
 import time
-from typing import List
 
 from pathlib import Path
-from collections import namedtuple
 
 from matplotlib import pyplot as plt, font_manager
 import numpy as np
 
 import tensorflow as tf
 
-from globals import ALL_FONTS, ALL_KANJI, IMG_SIZE, CATEGORIES_KANJI, CATEGORIES_ANGLE
+from globals import ALL_FONTS, ALL_KANJI, IMG_SIZE, CATEGORIES_KANJI
 from models import build_recogniser
-from rendering import gen_training_sample
+from pipeline import ProviderMultiprocess
 
 font_manager.fontManager.addfont("fonts/NotoSansJP-Regular.otf")
 plt.rc('font', family='Noto Sans JP')
@@ -44,123 +40,6 @@ else:
     print("No GPU found. Running on CPU. This may be very, very slow.")
 
 
-TrainingSample = namedtuple("TrainingSample", ["image", "kanji_index", "font_size", "angle"])
-
-
-class CircularBuffer:
-    def __init__(self, max_size: int):
-        self.data: List[TrainingSample] = []
-        self.capacity = max_size
-        self.ptr_write = 0
-        self.ptr_read = 0
-        self.lock = threading.Lock()
-        #self.write_counter = 0
-
-    def add(self, value):
-        with self.lock:
-            if len(self.data) < self.capacity:
-                self.data.append(value)
-            else:
-                self.data[self.ptr_write] = value
-                self.ptr_write += 1
-                self.ptr_write %= self.capacity
-            #self.write_counter += 1
-
-    def __iter__(self):
-        return self
-
-    def __next__(self) -> TrainingSample:
-        with self.lock:
-            val = self.data[self.ptr_read]
-            self.ptr_read += 1
-            self.ptr_read %= len(self.data)
-            return val
-
-    def get_generator(self):
-        while True:
-            yield next(self)
-
-
-class WriterProcess(multiprocessing.Process):
-    def __init__(self, kanji: list):
-        super().__init__()
-        self.__kanji = kanji
-        self.halt = multiprocessing.Value('b', False)  # shared memory
-        self.__fonts = ALL_FONTS
-        self.conn_parent, self.conn_child = multiprocessing.Pipe()
-
-    def run(self):
-        print("Writer Process is running...")
-        while not self.halt.value:
-            while self.conn_child.poll():
-                self.__kanji = self.conn_child.recv()
-            val = gen_training_sample(self.__kanji, self.__fonts)
-            self.conn_child.send(val)
-        print("Writer Process has stopped")
-
-    def set_kanji(self, values):
-        self.conn_parent.send(values)
-
-
-class WriterThread(threading.Thread):
-    def __init__(self, buffer: CircularBuffer, conn_parent):
-        super().__init__()
-        self.buf = buffer
-        self.halt = False
-        self.conn_parent = conn_parent
-
-    def run(self):
-        print("Writer Thread is running...")
-        while not self.halt:
-            img, i_kanji, fsize, angle = self.conn_parent.recv()
-            sample = TrainingSample(
-                tf.convert_to_tensor(img),
-                i_kanji,
-                fsize,
-                tf.one_hot(angle//10, CATEGORIES_ANGLE)
-            )
-            self.buf.add(sample)
-        print("Writer Thread has stopped")
-
-
-class Writer:
-    def __init__(self, buffer: CircularBuffer, kanji: list):
-        self.__kanji = kanji
-        self.proc = WriterProcess(kanji)
-        self.thread = WriterThread(buffer, self.proc.conn_parent)
-
-    def start(self):
-        self.proc.start()
-        self.thread.start()
-
-    def stop(self):
-        self.proc.halt.value = True
-        self.thread.halt = True
-
-    @property
-    def kanji(self):
-        return self.__kanji
-
-    @kanji.setter
-    def kanji(self, values):
-        self.__kanji = values
-        self.proc.set_kanji(values)
-
-
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
-RED = (255, 0, 0)
-
-
-def build_dataset(buf: CircularBuffer):
-    return tf.data.Dataset.from_generator(buf.get_generator, output_signature=(
-        tf.TensorSpec(shape=(IMG_SIZE, IMG_SIZE), dtype=tf.float32),
-        tf.TensorSpec(shape=(), dtype=tf.int16),
-        tf.TensorSpec(shape=(), dtype=tf.int16),
-        tf.TensorSpec(shape=(CATEGORIES_ANGLE,), dtype=tf.int16),
-    ))
-
-
 def plot_sample_from_dataset(dataset):
     fig = plt.figure(figsize=(8, 8))
     for ii, row in enumerate(dataset.take(16)):
@@ -179,12 +58,10 @@ def plot_sample_from_dataset(dataset):
 def main():
     do_training = True
 
-    all_kanji = ALL_KANJI
-    buf = CircularBuffer(100)
-    dataset = build_dataset(buf)
-    prod = Writer(buf, all_kanji[:100])
-    prod.start()
-    time.sleep(5)
+    provider = ProviderMultiprocess(ALL_KANJI[:100], ALL_FONTS)
+    provider.start_background_tasks()
+    time.sleep(1)
+    dataset = provider.get_dataset()
     plot_sample_from_dataset(dataset)
 
     m_kanji = build_recogniser(10)
@@ -212,7 +89,7 @@ def main():
 
         for n_kanji in range(100, CATEGORIES_KANJI, 100):
             print(f"Training on subset of {n_kanji} kanji:")
-            prod.kanji = all_kanji[:n_kanji]
+            provider.kanji = ALL_KANJI[:n_kanji]
             #time.sleep(1)
             m_kanji.fit(dataset_kanji.batch(16), steps_per_epoch=2000, epochs=1)
             #write_counter = buf.write_counter
@@ -222,16 +99,16 @@ def main():
             last_time = time.time()
 
         print(f"Training on all {CATEGORIES_KANJI} kanji:")
-        prod.kanji = all_kanji
+        provider.kanji = ALL_KANJI
         m_kanji.fit(dataset_kanji.batch(32), steps_per_epoch=1000, epochs=100)
 
         print("Stopping writer thread.")
-        prod.stop()
+        provider.stop_background_tasks()
 
         print(f"Saving model weights to: {save_path}")
         m_kanji.save_weights(str(save_path))
     else:
-        prod.halt = True
+        provider.stop_background_tasks()
         print(f"Loading model weights from: {save_path}")
         m_kanji.load_weights(str(save_path))
 
@@ -246,8 +123,8 @@ def main():
     for ii, (img, kanji, fsize, angle) in enumerate(dataset.take(n_rows * n_cols)):
         pred = m_kanji.predict(tf.reshape(img, (1, IMG_SIZE, IMG_SIZE, 1)))
 
-        ground_truth = all_kanji[kanji]
-        prediction = all_kanji[np.argmax(pred[0])]
+        ground_truth = ALL_KANJI[kanji]
+        prediction = ALL_KANJI[np.argmax(pred[0])]
         confidence = max(pred[0])
 
         ax: plt.Axes = fig.add_subplot(n_rows, n_cols, ii + 1)
