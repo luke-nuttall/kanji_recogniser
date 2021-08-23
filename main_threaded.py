@@ -9,6 +9,7 @@ import tensorflow as tf
 from globals import ALL_FONTS, ALL_KANJI, IMG_SIZE, CATEGORIES_KANJI, CATEGORIES_ANGLE
 from models import build_recogniser
 from pipeline import ProviderMultithread
+from training import train_curriculum
 
 font_manager.fontManager.addfont("fonts/NotoSansJP-Regular.otf")
 plt.rc('font', family='Noto Sans JP')
@@ -60,12 +61,9 @@ def main():
     provider = ProviderMultithread(ALL_KANJI[:100], ALL_FONTS)
     provider.start_background_tasks()
     time.sleep(1)
-    dataset = provider.get_dataset()
-    plot_sample_from_dataset(dataset)
 
     m_kanji = build_recogniser(10)
     m_kanji.summary()
-    m_kanji.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
 
     save_dir = Path("save") / "v2"
     save_path = save_dir / "recogniser_clutter"
@@ -82,21 +80,7 @@ def main():
     """
 
     if do_training:
-        dataset_kanji = dataset.map(lambda img, kanji, fsize, angle: (img, kanji))
-        #last_write_counter = buf.write_counter
-
-        for n_kanji in range(100, CATEGORIES_KANJI, 100):
-            print(f"Training on subset of {n_kanji} kanji:")
-            provider.kanji = ALL_KANJI[:n_kanji]
-            time.sleep(1)
-            m_kanji.fit(dataset_kanji.batch(8), steps_per_epoch=4000, epochs=1)
-            #write_counter = buf.write_counter
-            #print(f"There were {write_counter - last_write_counter} writes to the buffer during this epoch.")
-            #last_write_counter = write_counter
-
-        print(f"Training on all {CATEGORIES_KANJI} kanji:")
-        provider.kanji = ALL_KANJI
-        m_kanji.fit(dataset_kanji.batch(32), steps_per_epoch=1000, epochs=100)
+        train_curriculum(m_kanji, provider)
 
         print("Stopping writer thread.")
         provider.stop_background_tasks()
@@ -111,6 +95,8 @@ def main():
     '''
     This is for showing the performance of the kanji classifier.
     '''
+
+    dataset = provider.get_dataset()
 
     n_rows = 4
     n_cols = 8

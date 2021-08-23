@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 from matplotlib import pyplot as plt, font_manager
@@ -5,9 +6,10 @@ import numpy as np
 
 import tensorflow as tf
 
-from globals import ALL_FONTS, ALL_KANJI, IMG_SIZE, CATEGORIES_KANJI
+from globals import ALL_FONTS, ALL_KANJI, IMG_SIZE
 from models import build_recogniser
 from pipeline import Provider
+from training import train_curriculum
 
 font_manager.fontManager.addfont("fonts/NotoSansJP-Regular.otf")
 plt.rc('font', family='Noto Sans JP')
@@ -53,13 +55,14 @@ def plot_sample_from_dataset(dataset):
 
 
 def main():
+    do_training = True
+
     provider = Provider(ALL_KANJI[:100], ALL_FONTS)
-    dataset = provider.get_dataset()
-    plot_sample_from_dataset(dataset)
+    provider.start_background_tasks()
+    time.sleep(1)
 
     m_kanji = build_recogniser(10)
     m_kanji.summary()
-    m_kanji.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
 
     save_dir = Path("save") / "v1"
     save_path = save_dir / "recogniser_clutter"
@@ -75,24 +78,24 @@ def main():
        generally more accurate.
     """
 
-    ds_kanji = dataset.map(lambda img, kanji, fsize, angle: (img, kanji))
+    if do_training:
+        train_curriculum(m_kanji, provider)
 
-    for n_kanji in range(100, CATEGORIES_KANJI, 100):
-        print(f"Training on subset of {n_kanji} kanji:")
-        provider.kanji = ALL_KANJI[:n_kanji]
-        m_kanji.fit(ds_kanji.batch(8), steps_per_epoch=4000, epochs=1)
+        print("Stopping writer thread.")
+        provider.stop_background_tasks()
 
-    print(f"Training on all {CATEGORIES_KANJI} kanji:")
-    provider.kanji = ALL_KANJI
-    m_kanji.fit(ds_kanji.batch(32), steps_per_epoch=2000, epochs=10)
-
-    print(f"Saving model weights to: {save_path}")
-    m_kanji.save_weights(str(save_path))
+        print(f"Saving model weights to: {save_path}")
+        m_kanji.save_weights(str(save_path))
+    else:
+        provider.stop_background_tasks()
+        print(f"Loading model weights from: {save_path}")
+        m_kanji.load_weights(str(save_path))
 
     '''
     This is for showing the performance of the kanji classifier.
     '''
 
+    dataset = provider.get_dataset()
     n_rows = 4
     n_cols = 8
     scale = 2
