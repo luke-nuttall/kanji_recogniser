@@ -1,5 +1,6 @@
 import time
 from pathlib import Path
+import argparse
 
 from matplotlib import pyplot as plt, font_manager
 import numpy as np
@@ -8,8 +9,8 @@ import tensorflow as tf
 
 from globals import ALL_FONTS, ALL_KANJI, IMG_SIZE
 from models import build_recogniser
-from pipeline import Provider
-from training import train_curriculum
+from pipeline import Provider, ProviderMultithread, ProviderMultiprocess
+from training import train_curriculum, train_simple
 
 font_manager.fontManager.addfont("fonts/NotoSansJP-Regular.otf")
 plt.rc('font', family='Noto Sans JP')
@@ -55,16 +56,41 @@ def plot_sample_from_dataset(dataset):
 
 
 def main():
-    do_training = True
+    parser = argparse.ArgumentParser()
 
-    provider = Provider(ALL_KANJI[:100], ALL_FONTS)
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("-n", "--notrain", action="store_true",
+                       help="No training will occur. The model will be loaded from the last saved copy.")
+    group.add_argument("-t", "--train", choices=["simple", "thread", "process"], default="process",
+                       help="Controls the mode used to train the mode. If not specified the fastest mode will be used.")
+
+    parser.add_argument("-c", "--curriculum", action="store_true",
+                        help="Use curriculum learning. The model will start by learning the first 100 kanji, then "
+                             "subsequent epochs will slowly introduce more kanji.")
+    args = parser.parse_args()
+
+    if args.notrain:
+        provider = Provider(ALL_KANJI, ALL_FONTS)
+    else:
+        if args.train == "simple":
+            provider = Provider(ALL_KANJI[:100], ALL_FONTS)
+        elif args.train == "thread":
+            provider = ProviderMultithread(ALL_KANJI[:100], ALL_FONTS)
+        elif args.train == "process":
+            provider = ProviderMultiprocess(ALL_KANJI[:100], ALL_FONTS)
+        else:
+            provider = ProviderMultiprocess(ALL_KANJI[:100], ALL_FONTS)
+
     provider.start_background_tasks()
     time.sleep(1)
 
     m_kanji = build_recogniser(10)
     m_kanji.summary()
 
-    save_dir = Path("save") / "v1"
+    if args.curriculum:
+        save_dir = Path("save") / "v1"
+    else:
+        save_dir = Path("save") / "no_curriculum"
     save_path = save_dir / "recogniser_clutter"
 
     """
@@ -77,24 +103,20 @@ def main():
        quickly, but those updates have higher variance. With larger batches it gets fewer updates but they are 
        generally more accurate.
     """
-
-    if do_training:
-        train_curriculum(m_kanji, provider)
-
-        print("Stopping writer thread.")
-        provider.stop_background_tasks()
-
-        print(f"Saving model weights to: {save_path}")
-        m_kanji.save_weights(str(save_path))
-    else:
-        provider.stop_background_tasks()
+    if args.notrain:
         print(f"Loading model weights from: {save_path}")
         m_kanji.load_weights(str(save_path))
+    else:
+        if args.curriculum:
+            train_curriculum(m_kanji, provider)
+        else:
+            train_simple(m_kanji, provider)
+        print(f"Saving model weights to: {save_path}")
+        m_kanji.save_weights(str(save_path))
 
-    '''
+    """
     This is for showing the performance of the kanji classifier.
-    '''
-
+    """
     dataset = provider.get_dataset()
     n_rows = 4
     n_cols = 8
@@ -126,7 +148,6 @@ def main():
     """
     The code below is for inspecting the inner workings of the network.
     """
-
     conv1 = m_kanji.get_layer("conv1")
     kernels = conv1.weights[0]
     kernels = np.transpose(kernels.numpy()[:, :, 0, :], axes=[2, 0, 1])
@@ -183,6 +204,8 @@ def main():
 
     plt.tight_layout()
     plt.show()
+
+    provider.stop_background_tasks()
 
 
 if __name__ == "__main__":
