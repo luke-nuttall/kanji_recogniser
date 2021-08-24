@@ -10,18 +10,6 @@ from globals import IMG_SIZE, CATEGORIES_ANGLE
 TFSample = namedtuple("TFSample", ["image", "kanji_index", "font_size", "angle"])
 
 
-def dataset_from_iterator(iterator):
-    def gen():
-        for value in iterator:
-            yield value
-    return tf.data.Dataset.from_generator(gen, output_signature=(
-        tf.TensorSpec(shape=(IMG_SIZE, IMG_SIZE), dtype=tf.float32),
-        tf.TensorSpec(shape=(), dtype=tf.int16),
-        tf.TensorSpec(shape=(), dtype=tf.int16),
-        tf.TensorSpec(shape=(CATEGORIES_ANGLE,), dtype=tf.int16),
-    ))
-
-
 def convert_sample(raw: RawSample) -> TFSample:
     return TFSample(
         tf.convert_to_tensor(raw.image),
@@ -29,6 +17,15 @@ def convert_sample(raw: RawSample) -> TFSample:
         raw.font_size,
         tf.one_hot(int(CATEGORIES_ANGLE * raw.angle/360), CATEGORIES_ANGLE)
     )
+
+
+def get_dataset_from_generator(gen):
+    return tf.data.Dataset.from_generator(gen, output_signature=(
+        tf.TensorSpec(shape=(IMG_SIZE, IMG_SIZE), dtype=tf.float32),
+        tf.TensorSpec(shape=(), dtype=tf.int16),
+        tf.TensorSpec(shape=(), dtype=tf.int16),
+        tf.TensorSpec(shape=(CATEGORIES_ANGLE,), dtype=tf.int16),
+    ))
 
 
 class CircularBuffer:
@@ -84,12 +81,13 @@ class MT_Thread(threading.Thread):
         self.__fonts = fonts
 
     def run(self):
-        print("Writer is running...")
+        print("MT_Thread has started.")
         while not self.halt:
             with self.lock:
                 raw = gen_training_sample(self.__kanji, self.__fonts)
             sample = convert_sample(raw)
             self.buf.add(sample)
+        print("MT_Thread has stopped.")
 
     @property
     def kanji(self):
@@ -102,7 +100,7 @@ class MT_Thread(threading.Thread):
             self.__kanji = values
 
 
-class MP_WriterProcess(multiprocessing.Process):
+class MP_Process(multiprocessing.Process):
     def __init__(self, kanji: list, fonts: list):
         super().__init__()
         self.__kanji = kanji
@@ -111,19 +109,19 @@ class MP_WriterProcess(multiprocessing.Process):
         self.conn_parent, self.conn_child = multiprocessing.Pipe()
 
     def run(self):
-        print("Writer Process is running...")
+        print("MP_Process has started.")
         while not self.halt.value:
             while self.conn_child.poll():
                 self.__kanji = self.conn_child.recv()
             val = gen_training_sample(self.__kanji, self.__fonts)
             self.conn_child.send(val)
-        print("Writer Process has stopped")
+        print("MP_Process has stopped.")
 
     def set_kanji(self, values):
         self.conn_parent.send(values)
 
 
-class MP_WriterThread(threading.Thread):
+class MP_Thread(threading.Thread):
     def __init__(self, buffer: CircularBuffer, conn_parent):
         super().__init__()
         self.buf = buffer
@@ -131,12 +129,12 @@ class MP_WriterThread(threading.Thread):
         self.conn_parent = conn_parent
 
     def run(self):
-        print("Writer Thread is running...")
+        print("MP_Thread has started.")
         while not self.halt:
             raw_sample = self.conn_parent.recv()
             sample = convert_sample(raw_sample)
             self.buf.add(sample)
-        print("Writer Thread has stopped")
+        print("MP_Thread has stopped.")
 
 
 class Provider:
@@ -169,18 +167,13 @@ class Provider:
             yield convert_sample(raw)
 
     def get_dataset(self) -> tf.data.Dataset:
-        return tf.data.Dataset.from_generator(self.__generator, output_signature=(
-            tf.TensorSpec(shape=(IMG_SIZE, IMG_SIZE), dtype=tf.float32),
-            tf.TensorSpec(shape=(), dtype=tf.int16),
-            tf.TensorSpec(shape=(), dtype=tf.int16),
-            tf.TensorSpec(shape=(CATEGORIES_ANGLE,), dtype=tf.int16),
-        ))
+        return get_dataset_from_generator(self.__generator)
 
 
 class ProviderMultithread(Provider):
     def __init__(self, kanji: list, fonts: list):
         super().__init__(kanji, fonts)
-        self.buf = CircularBuffer(100)
+        self.buf = CircularBuffer(200)
         self.thread = MT_Thread(self.buf, kanji, fonts)
 
     def start_background_tasks(self):
@@ -203,20 +196,15 @@ class ProviderMultithread(Provider):
             yield sample
 
     def get_dataset(self) -> tf.data.Dataset:
-        return tf.data.Dataset.from_generator(self.__generator, output_signature=(
-            tf.TensorSpec(shape=(IMG_SIZE, IMG_SIZE), dtype=tf.float32),
-            tf.TensorSpec(shape=(), dtype=tf.int16),
-            tf.TensorSpec(shape=(), dtype=tf.int16),
-            tf.TensorSpec(shape=(CATEGORIES_ANGLE,), dtype=tf.int16),
-        ))
+        return get_dataset_from_generator(self.__generator)
 
 
 class ProviderMultiprocess(Provider):
     def __init__(self, kanji: list, fonts: list):
         super().__init__(kanji, fonts)
-        self.buf = CircularBuffer(100)
-        self.proc = MP_WriterProcess(kanji, fonts)
-        self.thread = MP_WriterThread(self.buf, self.proc.conn_parent)
+        self.buf = CircularBuffer(200)
+        self.proc = MP_Process(kanji, fonts)
+        self.thread = MP_Thread(self.buf, self.proc.conn_parent)
 
     def start_background_tasks(self):
         self.proc.start()
@@ -240,18 +228,13 @@ class ProviderMultiprocess(Provider):
             yield sample
 
     def get_dataset(self) -> tf.data.Dataset:
+        return get_dataset_from_generator(self.__generator)
         # This is an exact copy of the same method from the superclass
         # If the world were a sane, reasonable place it would be completely pointless to put this here
         # However, the world is evidently not a sane, reasonable place.
         # Adding this duplicate code speeds up execution by a factor of about 3.
         # I think gnomes are to blame.
-        return tf.data.Dataset.from_generator(self.__generator, output_signature=(
-            tf.TensorSpec(shape=(IMG_SIZE, IMG_SIZE), dtype=tf.float32),
-            tf.TensorSpec(shape=(), dtype=tf.int16),
-            tf.TensorSpec(shape=(), dtype=tf.int16),
-            tf.TensorSpec(shape=(CATEGORIES_ANGLE,), dtype=tf.int16),
-        ))
-        # More seriously, I would guess that it's a difference in how the "self.__generator" lookup is performed
-        # Maybe in one version the lookup is only performed once, while in the other it happens every time a
-        # value is requested from the dataset.
-        # This would be similar to the concept of virtual methods in low-level languages.
+        # More seriously, I would guess that it's a difference in how the "self.__generator" call is performed
+        # Maybe the code path to call a method which has been overridden in a child class is much more complicated
+        # than the code path when calling a method which is defined in the same class.
+        # It might be similar to the concept of virtual methods in low-level languages.
