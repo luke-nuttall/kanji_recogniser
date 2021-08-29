@@ -1,3 +1,4 @@
+import json
 import time
 from pathlib import Path
 import argparse
@@ -92,6 +93,7 @@ def main():
     else:
         save_dir = Path("save") / "no_curriculum"
     save_path = save_dir / "recogniser_clutter"
+    log_path = save_dir / "training_log.json"
 
     """
     The code below is for training the network.
@@ -108,11 +110,16 @@ def main():
         m_kanji.load_weights(str(save_path))
     else:
         if args.curriculum:
-            train_curriculum(m_kanji, provider)
+            train_log = train_curriculum(m_kanji, provider)
         else:
-            train_simple(m_kanji, provider)
+            train_log = train_simple(m_kanji, provider)
         print(f"Saving model weights to: {save_path}")
         m_kanji.save_weights(str(save_path))
+        print("\nLogs:")
+        for epoch, row in enumerate(train_log):
+            print(f"Epoch {epoch}: {row}")
+        with log_path.open("w") as fp:
+            json.dump(train_log, fp)
 
     """
     This is for showing the performance of the kanji classifier.
