@@ -1,4 +1,8 @@
+import time
+import subprocess
+
 import tensorflow as tf
+import numpy as np
 
 from globals import CATEGORIES_KANJI, ALL_KANJI
 from pipeline import Provider
@@ -9,10 +13,26 @@ class LoggerCallback(tf.keras.callbacks.Callback):
         super().__init__()
         self.data = []
         self.extra_params = {}
+        self.last_time = None  # used to track how long each epoch takes to run
+        self.proc = None
 
-    def on_epoch_end(self, epoch, logs=None):
+    def on_epoch_begin(self, epoch: int, logs=None):
+        self.last_time = time.time()
+        self.proc = subprocess.Popen(
+            args=["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits", "--loop=1"],
+            stdout=subprocess.PIPE, text=True
+        )
+
+    def on_epoch_end(self, epoch: int, logs=None):
         for key, val in self.extra_params.items():
             logs[key] = val
+        logs['time_taken'] = time.time() - self.last_time
+
+        self.proc.terminate()
+        stdout, _ = self.proc.communicate()
+        logs['gpu_utilization'] = np.mean([float(x) for x in stdout.split()])
+
+        print(logs)
         self.data.append(logs)
 
 
@@ -52,16 +72,11 @@ def train_curriculum(model: tf.keras.Model, provider: Provider):
     logger = LoggerCallback()
     logger.extra_params['batch_size'] = 16
 
-    #last_write_counter = buf.write_counter
-
     for n_kanji in range(100, CATEGORIES_KANJI+1, 100):
         logger.extra_params['n_kanji'] = n_kanji
         print(f"Training on subset of {n_kanji} kanji:")
         provider.kanji = ALL_KANJI[:n_kanji]
         model.fit(dataset.batch(16), steps_per_epoch=2000, epochs=1, callbacks=[logger])
-        #write_counter = buf.write_counter
-        #print(f"There were {write_counter - last_write_counter} writes to the buffer during this epoch.")
-        #last_write_counter = write_counter
 
     logger.extra_params['n_kanji'] = 2500
 

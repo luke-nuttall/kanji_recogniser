@@ -72,15 +72,20 @@ def main():
 
     if args.notrain:
         provider = Provider(ALL_KANJI, ALL_FONTS)
+        save_dir = Path("save") / "multiprocess"
     else:
         if args.train == "simple":
             provider = Provider(ALL_KANJI[:100], ALL_FONTS)
+            save_dir = Path("save") / "singlethread"
         elif args.train == "thread":
             provider = ProviderMultithread(ALL_KANJI[:100], ALL_FONTS)
+            save_dir = Path("save") / "multithread"
         elif args.train == "process":
             provider = ProviderMultiprocess(ALL_KANJI[:100], ALL_FONTS)
+            save_dir = Path("save") / "multiprocess"
         else:
             provider = ProviderMultiprocess(ALL_KANJI[:100], ALL_FONTS)
+            save_dir = Path("save") / "multiprocess"
 
     provider.start_background_tasks()
     time.sleep(1)
@@ -88,9 +93,7 @@ def main():
     m_kanji = build_recogniser(10)
     m_kanji.summary()
 
-    if args.curriculum:
-        save_dir = Path("save") / "v1"
-    else:
+    if not args.curriculum:
         save_dir = Path("save") / "no_curriculum"
     save_path = save_dir / "recogniser_clutter"
     log_path = save_dir / "training_log.json"
