@@ -4,7 +4,8 @@ from pathlib import Path
 from matplotlib import pyplot as plt, ticker
 import numpy as np
 
-from globals import CATEGORIES_KANJI
+from globals import ALL_KANJI, ALL_FONTS, CATEGORIES_KANJI
+from rendering import gen_training_sample
 
 
 def plot_accuracy_comparison():
@@ -13,7 +14,7 @@ def plot_accuracy_comparison():
              (save_dir / "no_curriculum", "No Curriculum")]
 
     fig, ax = plt.subplots(constrained_layout=True)
-    ax: plt.Axes
+    ax: plt.Axes  # this type hint only exists to make autocompletion work better in PyCharm
 
     for folder, label in saves:
         logfile = folder / "training_log.json"
@@ -99,10 +100,26 @@ def plot_gpu_comparison():
     plt.show()
 
 
+def plot_sample_kanji():
+    n_rows = 4
+    n_cols = 8
+    scale = 1.5
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * scale, n_rows * scale), constrained_layout=True)
+    for ax in axes.flatten():
+        ax: plt.Axes
+        sample = gen_training_sample(ALL_KANJI, ALL_FONTS)
+        ax.imshow(sample.image, cmap="gray", vmin=0, vmax=1)
+        ax.xaxis.set_visible(False)
+        ax.yaxis.set_visible(False)
+    fig.savefig("plots/kanji_sample.png", dpi=150)
+    plt.show()
+
+
 def main():
     plot_accuracy_comparison()
     plot_speed_comparison()
     plot_gpu_comparison()
+    plot_sample_kanji()
 
 
 if __name__ == "__main__":

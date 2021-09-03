@@ -32,7 +32,6 @@ class LoggerCallback(tf.keras.callbacks.Callback):
         stdout, _ = self.proc.communicate()
         logs['gpu_utilization'] = np.mean([float(x) for x in stdout.split()])
 
-        print(logs)
         self.data.append(logs)
 
 

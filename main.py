@@ -130,17 +130,17 @@ def main():
     dataset = provider.get_dataset()
     n_rows = 4
     n_cols = 8
-    scale = 2
+    scale = 1.5
     fig = plt.figure(figsize=(n_cols * scale, n_rows * scale))
     for ii, (img, kanji, fsize, angle) in enumerate(dataset.take(n_rows * n_cols)):
         pred = m_kanji.predict(tf.reshape(img, (1, IMG_SIZE, IMG_SIZE, 1)))
 
         ground_truth = ALL_KANJI[kanji]
         prediction = ALL_KANJI[np.argmax(pred[0])]
-        confidence = max(pred[0])
+        confidence = max(pred[0])  # This isn't a very good way to estimate confidence in the prediction
 
         ax: plt.Axes = fig.add_subplot(n_rows, n_cols, ii + 1)
-        ax.imshow(img.numpy(), cmap="gray", extent=(-1, 1, -1, 1), vmax=1.5)
+        ax.imshow(img.numpy(), cmap="gray", vmin=0, vmax=1)
         ax.set_xticks([])
         ax.set_yticks([])
 
@@ -150,9 +150,10 @@ def main():
         if ground_truth == prediction:
             color = green
 
-        ax.set_title(f"{ground_truth} -> {prediction} ({int(confidence * 100)}%)", color=color)
+        ax.set_title(f"{ground_truth} → {prediction} ({int(confidence * 100)}%)", color=color)
 
     plt.tight_layout()
+    fig.savefig("plots/classifier_results.png", dpi=150)
     plt.show()
 
     """
