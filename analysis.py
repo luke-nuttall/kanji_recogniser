@@ -11,6 +11,7 @@ from rendering import gen_training_sample
 def plot_accuracy_comparison():
     save_dir = Path("save")
     saves = [(save_dir / "multiprocess", "Curriculum"),
+             (save_dir / "shuffle", "Shuffled Curriculum"),
              (save_dir / "no_curriculum", "No Curriculum")]
 
     fig, ax = plt.subplots(constrained_layout=True)

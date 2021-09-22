@@ -62,7 +62,12 @@ def train_simple(model: tf.keras.Model, provider: Provider):
     return logger.data
 
 
-def train_curriculum(model: tf.keras.Model, provider: Provider):
+def train_curriculum(model: tf.keras.Model, provider: Provider, shuffle=False):
+    # Make a function-local copy of the kanji list so we can shuffle it safely
+    all_kanji = ALL_KANJI.copy()
+    if shuffle:
+        np.random.shuffle(all_kanji)
+
     model.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
 
     dataset = provider.get_dataset()
@@ -71,16 +76,16 @@ def train_curriculum(model: tf.keras.Model, provider: Provider):
     logger = LoggerCallback()
     logger.extra_params['batch_size'] = 16
 
-    for n_kanji in range(100, CATEGORIES_KANJI+1, 100):
+    for n_kanji in range(100, CATEGORIES_KANJI + 1, 100):
         logger.extra_params['n_kanji'] = n_kanji
         print(f"Training on subset of {n_kanji} kanji:")
-        provider.kanji = ALL_KANJI[:n_kanji]
+        provider.kanji = all_kanji[:n_kanji]
         model.fit(dataset.batch(16), steps_per_epoch=2000, epochs=1, callbacks=[logger])
 
     logger.extra_params['n_kanji'] = 2500
 
     print(f"Training on all {CATEGORIES_KANJI} kanji:")
-    provider.kanji = ALL_KANJI
+    provider.kanji = all_kanji
     print(f"Training with a batch size of 32:")
     logger.extra_params['batch_size'] = 32
     model.fit(dataset.batch(32), steps_per_epoch=1000, epochs=25, callbacks=[logger])

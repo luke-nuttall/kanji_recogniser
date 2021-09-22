@@ -68,6 +68,9 @@ def main():
     parser.add_argument("-c", "--curriculum", action="store_true",
                         help="Use curriculum learning. The model will start by learning the first 100 kanji, then "
                              "subsequent epochs will slowly introduce more kanji.")
+    parser.add_argument("-s", "--shuffle", action="store_true",
+                        help="Randomise the order of the kanji for curriculum learning. By default they are sorted "
+                             "in order of increasing stroke count.")
     args = parser.parse_args()
 
     if args.notrain:
@@ -95,6 +98,8 @@ def main():
 
     if not args.curriculum:
         save_dir = Path("save") / "no_curriculum"
+    elif args.shuffle:
+        save_dir = Path("save") / "shuffle"
     save_path = save_dir / "recogniser_clutter"
     log_path = save_dir / "training_log.json"
 
@@ -113,7 +118,7 @@ def main():
         m_kanji.load_weights(str(save_path))
     else:
         if args.curriculum:
-            train_log = train_curriculum(m_kanji, provider)
+            train_log = train_curriculum(m_kanji, provider, args.shuffle)
         else:
             train_log = train_simple(m_kanji, provider)
         print(f"Saving model weights to: {save_path}")
