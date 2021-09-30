@@ -17,26 +17,15 @@ font_manager.fontManager.addfont("fonts/NotoSansJP-Regular.otf")
 plt.rc('font', family='Noto Sans JP')
 
 """
-The GPU has a limited amount of memory.
-Some of that memory will be allocated to the model, while some must be left free to allow essential libraries to be 
-loaded onto the GPU.
-Annoyingly Tensorflow allocates the memory for the model before it loads the libraries.
-If too much memory gets allocated to the model then there won't be enough space left for libraries and we'll get 
-confusing error messages about various libraries being unavailable even though they're installed in the OS.
-Even more annoyingly TensorFlow has a nasty habit of allocating too much memory for the model.
-The code below lets us specify exactly how much GPU memory to use for the model.
-If the value is too small we'll at least get helpful error messages about "OUT OF MEMORY" rather than confusing ones
-about libraries being unavailable.
+By default TensorFlow will try to claim as much GPU memory as it possibly can.
+For some reason this causes it to fail to load certain essential libraries such as cuDNN.
+The following code changes TensorFlow's behavior so that it only allocates as much GPU memory as it actually needs.
 """
-gpu_memory = 500
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
-    tf.config.experimental.set_virtual_device_configuration(
-        gpus[0],
-        [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=gpu_memory)]
-    )
-    print(f"Found GPU: {gpus[0].name}")
-    print(f"Setting GPU memory limit to {gpu_memory} MB")
+    for gpu in gpus:
+        print(f"Found GPU: {gpu.name}")
+        tf.config.experimental.set_memory_growth(gpu, True)
 else:
     print("No GPU found. Running on CPU. This may be very, very slow.")
 
