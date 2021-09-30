@@ -75,12 +75,16 @@ def train_curriculum(model: tf.keras.Model, provider: Provider, shuffle=False):
 
     logger = LoggerCallback()
     logger.extra_params['batch_size'] = 16
+    callbacks = [logger]
+
+    # tensorboard = tf.keras.callbacks.TensorBoard(log_dir="logs", histogram_freq=1, profile_batch='500,520')
+    # callbacks.append(tensorboard)
 
     for n_kanji in range(100, CATEGORIES_KANJI + 1, 100):
         logger.extra_params['n_kanji'] = n_kanji
         print(f"Training on subset of {n_kanji} kanji:")
         provider.kanji = all_kanji[:n_kanji]
-        model.fit(dataset.batch(16), steps_per_epoch=2000, epochs=1, callbacks=[logger])
+        model.fit(dataset.batch(16), steps_per_epoch=2000, epochs=1, callbacks=callbacks)
 
     logger.extra_params['n_kanji'] = 2500
 
@@ -88,12 +92,12 @@ def train_curriculum(model: tf.keras.Model, provider: Provider, shuffle=False):
     provider.kanji = all_kanji
     print(f"Training with a batch size of 32:")
     logger.extra_params['batch_size'] = 32
-    model.fit(dataset.batch(32), steps_per_epoch=1000, epochs=25, callbacks=[logger])
+    model.fit(dataset.batch(32), steps_per_epoch=1000, epochs=25, callbacks=callbacks)
     print(f"Training with a batch size of 64:")
     logger.extra_params['batch_size'] = 64
-    model.fit(dataset.batch(64), steps_per_epoch=500, epochs=25, callbacks=[logger])
+    model.fit(dataset.batch(64), steps_per_epoch=500, epochs=25, callbacks=callbacks)
     print(f"Training with a batch size of 128:")
     logger.extra_params['batch_size'] = 128
-    model.fit(dataset.batch(128), steps_per_epoch=250, epochs=25, callbacks=[logger])
+    model.fit(dataset.batch(128), steps_per_epoch=250, epochs=25, callbacks=callbacks)
 
     return logger.data

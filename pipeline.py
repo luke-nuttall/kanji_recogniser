@@ -1,7 +1,8 @@
-import multiprocessing
+import multiprocessing as mp
 import threading
-from typing import List
 from collections import namedtuple
+import queue  # for queue.Full and queue.Empty exceptions used by mp.Queue
+
 import tensorflow as tf
 
 from rendering import gen_training_sample, RawSample
@@ -11,8 +12,11 @@ TFSample = namedtuple("TFSample", ["image", "kanji_index", "font_size", "angle"]
 
 
 def convert_sample(raw: RawSample) -> TFSample:
+    # This function is necessary because TF objects should only be created in the main process
+    # Trying to create TF objects in other processes appears to create multiple copies of TF which
+    # then compete for resources such as GPU memory
     return TFSample(
-        tf.convert_to_tensor(raw.image),
+        raw.image,
         raw.kanji_index,
         raw.font_size,
         tf.one_hot(int(CATEGORIES_ANGLE * raw.angle/360), CATEGORIES_ANGLE)
@@ -28,66 +32,26 @@ def get_dataset_from_generator(gen):
     ))
 
 
-class CircularBuffer:
-    """
-    A thread-safe circular buffer implemented on top of a Python list.
-    All operations are O(1).
-    Items are not removed when they are read.
-
-    The idea is that the buffer will keep returning values regardless of any speed difference between the thread
-    writing to the buffer and the one reading from it.
-    If the writing thread is slower than the reading thread then the same item may be returned multiple times.
-    """
-    def __init__(self, max_size: int):
-        self.__data: List[TFSample] = []
-        self.capacity = max_size
-        self.ptr_write = 0
-        self.ptr_read = 0
-        self.lock = threading.Lock()
-        #self.write_counter = 0
-
-    def add(self, value):
-        with self.lock:
-            if len(self.__data) < self.capacity:
-                self.__data.append(value)
-            else:
-                self.__data[self.ptr_write] = value
-                self.ptr_write += 1
-                self.ptr_write %= self.capacity
-            #self.write_counter += 1
-
-    def __iter__(self):
-        return self
-
-    def __next__(self) -> TFSample:
-        with self.lock:
-            val = self.__data[self.ptr_read]
-            self.ptr_read += 1
-            self.ptr_read %= len(self.__data)
-            return val
-
-    def get_generator(self):
-        while True:
-            yield next(self)
-
-
-class MT_Thread(threading.Thread):
-    def __init__(self, buffer: CircularBuffer, kanji: list, fonts: list):
+class GenThread(threading.Thread):
+    def __init__(self, queue: mp.Queue, kanji: list, fonts: list, batch_size=16):
         super().__init__()
-        self.buf = buffer
+        self.queue = queue
         self.__kanji = kanji
         self.halt = False
         self.lock = threading.Lock()
         self.__fonts = fonts
+        self.batch_size = batch_size
 
     def run(self):
-        print("MT_Thread has started.")
+        print(f"{self.__class__.__name__} has started.")
         while not self.halt:
-            with self.lock:
-                raw = gen_training_sample(self.__kanji, self.__fonts)
-            sample = convert_sample(raw)
-            self.buf.add(sample)
-        print("MT_Thread has stopped.")
+            batch = []
+            for _ in range(self.batch_size):
+                with self.lock:
+                    raw = gen_training_sample(self.__kanji, self.__fonts)
+                    batch.append(convert_sample(raw))
+            self.queue.put(batch)
+        print(f"{self.__class__.__name__} has stopped.")
 
     @property
     def kanji(self):
@@ -100,41 +64,29 @@ class MT_Thread(threading.Thread):
             self.__kanji = values
 
 
-class MP_Process(multiprocessing.Process):
-    def __init__(self, kanji: list, fonts: list):
+class GenProcess(mp.Process):
+    def __init__(self, queue: mp.Queue, kanji: list, fonts: list, batch_size=16):
         super().__init__()
         self.__kanji = kanji
-        self.halt = multiprocessing.Value('b', False)  # shared memory
+        self.halt = mp.Value('b', False)  # shared memory
         self.__fonts = fonts
-        self.conn_parent, self.conn_child = multiprocessing.Pipe()
+        self.conn_parent, self.conn_child = mp.Pipe()
+        self.queue = queue
+        self.__batch_size = batch_size
+        # Batching is done to check for, and circumvent, any overhead
+        # from rapidly enqueuing and dequeuing lots of small objects.
 
     def run(self):
-        print("MP_Process has started.")
+        print(f"{self.__class__.__name__} has started.")
         while not self.halt.value:
             while self.conn_child.poll():
                 self.__kanji = self.conn_child.recv()
-            val = gen_training_sample(self.__kanji, self.__fonts)
-            self.conn_child.send(val)
-        print("MP_Process has stopped.")
+            batch = [gen_training_sample(self.__kanji, self.__fonts) for _ in range(self.__batch_size)]
+            self.queue.put(batch)
+        print(f"{self.__class__.__name__} has stopped.")
 
     def set_kanji(self, values):
         self.conn_parent.send(values)
-
-
-class MP_Thread(threading.Thread):
-    def __init__(self, buffer: CircularBuffer, conn_parent):
-        super().__init__()
-        self.buf = buffer
-        self.halt = False
-        self.conn_parent = conn_parent
-
-    def run(self):
-        print("MP_Thread has started.")
-        while not self.halt:
-            raw_sample = self.conn_parent.recv()
-            sample = convert_sample(raw_sample)
-            self.buf.add(sample)
-        print("MP_Thread has stopped.")
 
 
 class Provider:
@@ -148,9 +100,16 @@ class Provider:
         self.__fonts = fonts
 
     def start_background_tasks(self):
+        """
+        This should be called before attempting to use get_dataset().
+        """
         pass
 
     def stop_background_tasks(self):
+        """
+        Irreversibly halt any background tasks.
+        After calling this the dataset may stop producing output.
+        """
         pass
 
     @property
@@ -171,16 +130,30 @@ class Provider:
 
 
 class ProviderMultithread(Provider):
-    def __init__(self, kanji: list, fonts: list):
+    def __init__(self, kanji: list, fonts: list, n_threads=4):
         super().__init__(kanji, fonts)
-        self.buf = CircularBuffer(200)
-        self.thread = MT_Thread(self.buf, kanji, fonts)
+        self.queue_size = 32
+        self.manager = mp.Manager()  # see https://stackoverflow.com/a/46041587
+        self.queue = self.manager.Queue(self.queue_size)
+        self.threads = [GenThread(self.queue, kanji, fonts) for _ in range(n_threads)]
 
     def start_background_tasks(self):
-        self.thread.start()
+        for thread in self.threads:
+            thread.start()
 
     def stop_background_tasks(self):
-        self.thread.halt = True
+        for thread in self.threads:
+            thread.halt = True
+        self.__empty_queue()
+        for thread in self.threads:
+            thread.join()
+
+    def __empty_queue(self):
+        for ii in range(self.queue_size):
+            try:
+                self.queue.get(block=False)
+            except queue.Empty:
+                return
 
     @property
     def kanji(self):
@@ -189,30 +162,49 @@ class ProviderMultithread(Provider):
     @kanji.setter
     def kanji(self, values):
         self.__kanji = values
-        self.thread.kanji = values
+        for thread in self.threads:
+            thread.kanji = values
+        self.__empty_queue()
 
     def __generator(self):
-        for sample in self.buf:
-            yield sample
+        while True:
+            batch = self.queue.get(timeout=5)
+            for sample in batch:
+                yield sample
 
     def get_dataset(self) -> tf.data.Dataset:
         return get_dataset_from_generator(self.__generator)
 
 
 class ProviderMultiprocess(Provider):
-    def __init__(self, kanji: list, fonts: list):
+    def __init__(self, kanji: list, fonts: list, n_threads=4):
         super().__init__(kanji, fonts)
-        self.buf = CircularBuffer(200)
-        self.proc = MP_Process(kanji, fonts)
-        self.thread = MP_Thread(self.buf, self.proc.conn_parent)
+        self.queue_size = 32
+        self.manager = mp.Manager()  # see https://stackoverflow.com/a/46041587
+        self.queue = self.manager.Queue(self.queue_size)
+        self.procs = [GenProcess(self.queue, kanji, fonts) for _ in range(n_threads)]
 
     def start_background_tasks(self):
-        self.proc.start()
-        self.thread.start()
+        for proc in self.procs:
+            proc.start()
 
     def stop_background_tasks(self):
-        self.proc.halt.value = True
-        self.thread.halt = True
+        for proc in self.procs:
+            proc.halt.value = True
+        self.__flush_queue()  # This just makes sure that the processes aren't stuck waiting for space in the queue.
+        for proc in self.procs:
+            proc.join()
+
+    def __flush_queue(self):
+        """
+        Remove every item which is in the queue when this function is called.
+        Items which are added to the queue while this function is running may or may not be removed.
+        """
+        for ii in range(self.queue_size):
+            try:
+                self.queue.get(block=False)
+            except queue.Empty:
+                return
 
     @property
     def kanji(self):
@@ -221,11 +213,15 @@ class ProviderMultiprocess(Provider):
     @kanji.setter
     def kanji(self, values):
         self.__kanji = values
-        self.proc.set_kanji(values)
+        for proc in self.procs:
+            proc.set_kanji(values)
+        self.__flush_queue()  # Clear old data so that newly generated samples are at the front of the queue.
 
     def __generator(self):
-        for sample in self.buf:
-            yield sample
+        while True:
+            batch = self.queue.get(timeout=5)
+            for raw_sample in batch:
+                yield convert_sample(raw_sample)
 
     def get_dataset(self) -> tf.data.Dataset:
         return get_dataset_from_generator(self.__generator)

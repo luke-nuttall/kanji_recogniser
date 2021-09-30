@@ -43,9 +43,9 @@ def plot_accuracy_comparison():
 
 def plot_speed_comparison():
     save_dir = Path("save")
-    saves = [(save_dir / "multiprocess", "Multi-Process"),
-             (save_dir / "multithread", "Multi-Threaded"),
-             (save_dir / "singlethread", "Single-Threaded")]
+    saves = [(save_dir / "multiprocess", "Multi-Processing"),
+             (save_dir / "multithread", "Explicit Multi-Threading"),
+             (save_dir / "singlethread", "TF Multi-Threading")]
 
     fig, ax = plt.subplots(constrained_layout=True)
     ax: plt.Axes
@@ -73,9 +73,9 @@ def plot_speed_comparison():
 
 def plot_gpu_comparison():
     save_dir = Path("save")
-    saves = [(save_dir / "multiprocess", "Multi-Process"),
-             (save_dir / "multithread", "Multi-Threaded"),
-             (save_dir / "singlethread", "Single-Threaded")]
+    saves = [(save_dir / "multiprocess", "Multi-Processing"),
+             (save_dir / "multithread", "Explicit Multi-Threading"),
+             (save_dir / "singlethread", "TF Multi-Threading")]
 
     fig, ax = plt.subplots(constrained_layout=True)
     ax: plt.Axes
