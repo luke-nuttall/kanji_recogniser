@@ -1,5 +1,4 @@
 import json
-import time
 from pathlib import Path
 import argparse
 
@@ -15,6 +14,9 @@ from training import train_curriculum, train_simple
 # This is so that Japanese kanji can be used in titles and labels on matplotlib graphs
 font_manager.fontManager.addfont("fonts/NotoSansJP-Regular.otf")
 plt.rc('font', family='Noto Sans JP')
+
+# Uncomment this to see which device each TF operation is assigned to
+# tf.debugging.set_log_device_placement(True)
 
 """
 By default TensorFlow will try to claim as much GPU memory as it possibly can.

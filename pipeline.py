@@ -5,22 +5,8 @@ import queue  # for queue.Full and queue.Empty exceptions used by mp.Queue
 
 import tensorflow as tf
 
-from rendering import gen_training_sample, RawSample
-from globals import IMG_SIZE, CATEGORIES_ANGLE
-
-TFSample = namedtuple("TFSample", ["image", "kanji_index", "font_size", "angle"])
-
-
-def convert_sample(raw: RawSample) -> TFSample:
-    # This function is necessary because TF objects should only be created in the main process
-    # Trying to create TF objects in other processes appears to create multiple copies of TF which
-    # then compete for resources such as GPU memory
-    return TFSample(
-        raw.image,
-        raw.kanji_index,
-        raw.font_size,
-        tf.one_hot(int(CATEGORIES_ANGLE * raw.angle/360), CATEGORIES_ANGLE)
-    )
+from rendering import gen_training_sample
+from globals import IMG_SIZE
 
 
 def get_dataset_from_generator(gen):
@@ -28,7 +14,7 @@ def get_dataset_from_generator(gen):
         tf.TensorSpec(shape=(IMG_SIZE, IMG_SIZE), dtype=tf.float32),
         tf.TensorSpec(shape=(), dtype=tf.int16),
         tf.TensorSpec(shape=(), dtype=tf.int16),
-        tf.TensorSpec(shape=(CATEGORIES_ANGLE,), dtype=tf.int16),
+        tf.TensorSpec(shape=(), dtype=tf.int16),
     ))
 
 
@@ -45,11 +31,8 @@ class GenThread(threading.Thread):
     def run(self):
         print(f"{self.__class__.__name__} has started.")
         while not self.halt:
-            batch = []
-            for _ in range(self.batch_size):
-                with self.lock:
-                    raw = gen_training_sample(self.__kanji, self.__fonts)
-                    batch.append(convert_sample(raw))
+            with self.lock:
+                batch = [gen_training_sample(self.__kanji, self.__fonts) for _ in range(self.batch_size)]
             self.queue.put(batch)
         print(f"{self.__class__.__name__} has stopped.")
 
@@ -122,8 +105,7 @@ class Provider:
 
     def __generator(self):
         while True:
-            raw = gen_training_sample(self.__kanji, self.__fonts)
-            yield convert_sample(raw)
+            yield gen_training_sample(self.__kanji, self.__fonts)
 
     def get_dataset(self) -> tf.data.Dataset:
         return get_dataset_from_generator(self.__generator)
@@ -144,11 +126,15 @@ class ProviderMultithread(Provider):
     def stop_background_tasks(self):
         for thread in self.threads:
             thread.halt = True
-        self.__empty_queue()
+        self.__flush_queue()  # This just makes sure that the processes aren't stuck waiting for space in the queue.
         for thread in self.threads:
             thread.join()
 
-    def __empty_queue(self):
+    def __flush_queue(self):
+        """
+        Remove every item which is in the queue when this function is called.
+        Items which are added to the queue while this function is running may or may not be removed.
+        """
         for ii in range(self.queue_size):
             try:
                 self.queue.get(block=False)
@@ -164,7 +150,7 @@ class ProviderMultithread(Provider):
         self.__kanji = values
         for thread in self.threads:
             thread.kanji = values
-        self.__empty_queue()
+        self.__flush_queue()
 
     def __generator(self):
         while True:
@@ -220,8 +206,8 @@ class ProviderMultiprocess(Provider):
     def __generator(self):
         while True:
             batch = self.queue.get(timeout=5)
-            for raw_sample in batch:
-                yield convert_sample(raw_sample)
+            for sample in batch:
+                yield sample
 
     def get_dataset(self) -> tf.data.Dataset:
         return get_dataset_from_generator(self.__generator)
@@ -233,4 +219,4 @@ class ProviderMultiprocess(Provider):
         # More seriously, I would guess that it's a difference in how the "self.__generator" call is performed
         # Maybe the code path to call a method which has been overridden in a child class is much more complicated
         # than the code path when calling a method which is defined in the same class.
-        # It might be similar to the concept of virtual methods in low-level languages.
+        # It might be similar to the concept of virtual methods in low-level languages.'''

@@ -96,7 +96,7 @@ def plot_gpu_comparison():
     ax.xaxis.set_minor_locator(ticker.MultipleLocator(5))
     ax.xaxis.set_major_locator(ticker.MultipleLocator(25))
     ax.set_xlim(0, 100)
-    ax.set_ylim(0, None)
+    ax.set_ylim(0, 100)
     fig.savefig("plots/gpu_util_comparison.png", dpi=150)
     plt.show()
 

@@ -3,16 +3,26 @@ from random import choice, randint, random
 import numpy as np
 from collections import namedtuple
 
-from globals import IMG_SIZE
+from globals import IMG_SIZE, CATEGORIES_ANGLE
 
 
+# A RawSample stores the angle as a float in degrees
 RawSample = namedtuple("RawSample", ["image", "kanji_index", "font_size", "angle"])
+# A TrainingSample is like a RawSample but the angle has been quantized to an integer between 0 and CATEGORIES_ANGLE
+TrainingSample = namedtuple("TrainingSample", ["image", "kanji_index", "font_size", "angle"])
 
 
 WHITE = (255, 255, 255)
 
 
 def render_kanji(kanji, fontpath, fsize, angle):
+    """
+    :param kanji: the unicode character to render, as a string
+    :param fontpath: path to the TrueType or OpenType font to use
+    :param fsize: the font size
+    :param angle: the rotation angle in degrees
+    :return: a PIL Image of the kanji
+    """
     color_text = (0, 0, 0, randint(128, 255))
     color_bg = (255, 255, 255, randint(128, 255))
     bgsize = randint(fsize, IMG_SIZE)
@@ -65,7 +75,7 @@ def render_image(kanji, font, fsize, angle):
     return img
 
 
-def gen_training_sample(all_kanji, all_fonts):
+def gen_raw_sample(all_kanji, all_fonts):
     i_kanji = randint(0, len(all_kanji)-1)
     kanji = all_kanji[i_kanji]
     font = choice(all_fonts)
@@ -74,3 +84,13 @@ def gen_training_sample(all_kanji, all_fonts):
     angle_noise = random()*10 - 5
     img = render_image(kanji, font, fsize, angle + angle_noise)
     return RawSample(np.array(img.convert("L"))/255, i_kanji, fsize, angle)
+
+
+def gen_training_sample(all_kanji, all_fonts):
+    raw = gen_raw_sample(all_kanji, all_fonts)
+    return TrainingSample(
+        raw.image,
+        raw.kanji_index,
+        raw.font_size,
+        int(CATEGORIES_ANGLE * raw.angle/360)
+    )
