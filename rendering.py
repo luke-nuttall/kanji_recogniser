@@ -3,7 +3,7 @@ from random import choice, randint, random
 import numpy as np
 from collections import namedtuple
 
-from globals import IMG_SIZE, CATEGORIES_ANGLE
+from globals import IMG_SIZE, CATEGORIES_ANGLE, KANJI_INDICES
 
 
 # A RawSample stores the angle as a float in degrees
@@ -76,8 +76,8 @@ def render_image(kanji, font, fsize, angle):
 
 
 def gen_raw_sample(all_kanji, all_fonts):
-    i_kanji = randint(0, len(all_kanji)-1)
-    kanji = all_kanji[i_kanji]
+    kanji = all_kanji[randint(0, len(all_kanji)-1)]
+    i_kanji = KANJI_INDICES[kanji]
     font = choice(all_fonts)
     fsize = randint(16, 24)  # randint(16, 180)
     angle = 0  # randint(0, 35)*10
