@@ -147,6 +147,16 @@ class ProviderMultiBase(Provider):
             except queue.Empty:
                 return
 
+    @property
+    def kanji(self):
+        return self.__kanji
+
+    @kanji.setter
+    def kanji(self, values):
+        self.__kanji = values
+        for thread in self.threads:
+            thread.set_kanji(values)
+
     def __generator(self):
         while True:
             batch = self.queue.get(timeout=5)

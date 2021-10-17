@@ -69,16 +69,16 @@ def main():
         save_dir = Path("save") / "multiprocess"
     else:
         if args.train == "simple":
-            provider = Provider(ALL_KANJI[:100], ALL_FONTS)
+            provider = Provider(ALL_KANJI, ALL_FONTS)
             save_dir = Path("save") / "singlethread"
         elif args.train == "thread":
-            provider = ProviderMultithread(ALL_KANJI[:100], ALL_FONTS)
+            provider = ProviderMultithread(ALL_KANJI, ALL_FONTS)
             save_dir = Path("save") / "multithread"
         elif args.train == "process":
-            provider = ProviderMultiprocess(ALL_KANJI[:100], ALL_FONTS)
+            provider = ProviderMultiprocess(ALL_KANJI, ALL_FONTS)
             save_dir = Path("save") / "multiprocess"
         else:
-            provider = ProviderMultiprocess(ALL_KANJI[:100], ALL_FONTS)
+            provider = ProviderMultiprocess(ALL_KANJI, ALL_FONTS)
             save_dir = Path("save") / "multiprocess"
 
     if not args.curriculum:
