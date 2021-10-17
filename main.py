@@ -64,22 +64,18 @@ def main():
                              "in order of increasing stroke count.")
     args = parser.parse_args()
 
-    if args.notrain:
+    if args.train == "simple":
+        provider = Provider(ALL_KANJI, ALL_FONTS)
+        save_dir = Path("save") / "singlethread"
+    elif args.train == "thread":
+        provider = ProviderMultithread(ALL_KANJI, ALL_FONTS)
+        save_dir = Path("save") / "multithread"
+    elif args.train == "process":
         provider = ProviderMultiprocess(ALL_KANJI, ALL_FONTS)
         save_dir = Path("save") / "multiprocess"
     else:
-        if args.train == "simple":
-            provider = Provider(ALL_KANJI, ALL_FONTS)
-            save_dir = Path("save") / "singlethread"
-        elif args.train == "thread":
-            provider = ProviderMultithread(ALL_KANJI, ALL_FONTS)
-            save_dir = Path("save") / "multithread"
-        elif args.train == "process":
-            provider = ProviderMultiprocess(ALL_KANJI, ALL_FONTS)
-            save_dir = Path("save") / "multiprocess"
-        else:
-            provider = ProviderMultiprocess(ALL_KANJI, ALL_FONTS)
-            save_dir = Path("save") / "multiprocess"
+        provider = ProviderMultiprocess(ALL_KANJI, ALL_FONTS)
+        save_dir = Path("save") / "multiprocess"
 
     if not args.curriculum:
         save_dir = Path("save") / "no_curriculum"
