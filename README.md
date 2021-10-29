@@ -15,6 +15,11 @@ For a more detailed write-up please take a look at https://hackmd.io/@luke-nutta
   * Pillow
 * `nvidia-smi` somewhere on your PATH (should be installed automatically with nvidia GPU drivers)
 
+To make use of the rust code in this branch you should install the rust toolchain from https://rustup.rs/
+
+In addition to the standard rust toolchain it's helpful to also create a python virtualenv and `pip install maturin`.
+[Maturin](https://pypi.org/project/maturin/) works with cargo and pyo3 to make it very easy to build and install rust python modules with a single command.
+
 ## Usage
 
 After downloading/cloning the repository you should run `get_fonts.sh` to download a basic set of Japanese fonts.
