@@ -1,6 +1,5 @@
 import datagen
 from matplotlib import pyplot as plt
-from pathlib import Path
 from rendering import gen_raw_sample
 from globals import IMG_SIZE, ALL_FONTS, ALL_KANJI
 import time
@@ -19,6 +18,8 @@ def timer(label):
 
 def main():
     renderer = datagen.RustRenderer(IMG_SIZE, [str(x) for x in ALL_FONTS])
+    renderer.populate_cache(ALL_KANJI)
+
     iterations = 10_000
 
     with timer(f"rust {iterations} iterations:"):
@@ -33,7 +34,7 @@ def main():
             gen_raw_sample(ALL_KANJI, ALL_FONTS)
 
     plt.imshow(arr, cmap="gray", vmin=0, vmax=1)
-    print(arr, type(arr))
+    print(kanji, font_size, angle)
     plt.show()
 
 

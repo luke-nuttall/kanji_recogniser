@@ -1,180 +1,291 @@
+use std::collections::HashMap;
 use ndarray::{Array1};
 use numpy::{PyArray, ToPyArray};
 use pyo3::prelude::*;
-use glutin::{ContextBuilder, event_loop::EventLoop, dpi::PhysicalSize, Context, PossiblyCurrent};
-use femtovg::{renderer::OpenGl, Canvas, Path, Paint, Color, Baseline, Align, FontId};
+use pyo3::exceptions;
 use rand;
+use rand::seq::SliceRandom;
+use rasterize::{BBox, Color, FillRule, Image, Layer, LinColor, LineCap, LineJoin, Path, PathBuilder, Point, SignedDifferenceRasterizer, StrokeStyle, Transform};
+use freetype::{Library, face::LoadFlag, outline::Curve, Vector, GlyphSlot};
 use rand::Rng;
 
+fn to_point(p: &Vector) -> Point {
+    Point::new(p.x as f64, p.y as f64)
+}
+
+#[derive(Debug)]
+enum Segment {
+    Line { p0: Point },
+    Bezier2 { p0: Point, p1: Point },
+    Bezier3 { p0: Point, p1: Point, p2: Point },
+}
+
+#[derive(Debug)]
+struct Contour {
+    start: Point,
+    segments: Vec<Segment>,
+}
+
+/// A vector graphics representation of a glyph
+#[derive(Debug)]
+struct Glyph {
+    contours: Vec<Contour>,
+    width: f64,
+    height: f64,
+    /// Horizontal Bearing X
+    hbx: f64,
+    /// Horizontal Bearing Y
+    hby: f64,
+}
+
+#[derive(Debug)]
+struct FontFace {
+    path: String,
+    em_size: f64,
+    glyphs: HashMap<char, Glyph>,
+}
+
+impl From<Curve> for Segment {
+    fn from(curve: Curve) -> Self {
+        match curve {
+            Curve::Line(p0) => {
+                Segment::Line{ p0: to_point(&p0) }
+            },
+            Curve::Bezier2(p0, p1) => {
+                Segment::Bezier2{ p0: to_point(&p0), p1: to_point(&p1) }
+            },
+            Curve::Bezier3(p0, p1, p2) => {
+                Segment::Bezier3{ p0: to_point(&p0), p1: to_point(&p1), p2: to_point(&p2) }
+            },
+        }
+    }
+}
+
+impl From<&GlyphSlot> for Glyph {
+    fn from(gs: &GlyphSlot) -> Self {
+        let metrics = gs.metrics();
+        let contours = gs.outline().unwrap().contours_iter().map(|contour| {
+            Contour {
+                start: to_point(contour.start()),
+                segments: contour.map(|curve| {Segment::from(curve)}).collect()
+            }
+        }).collect();
+        Glyph {
+            contours,
+            width: metrics.width as f64,
+            height: metrics.height as f64,
+            hbx: metrics.horiBearingX as f64,
+            hby: metrics.horiBearingY as f64,
+        }
+    }
+}
+
+impl Glyph {
+    fn to_path(&self) -> Path {
+        let mut pb = PathBuilder::new();
+        for contour in self.contours.iter() {
+            pb.move_to(contour.start);
+            for seg in contour.segments.iter() {
+                match seg {
+                    Segment::Line{p0} => { pb.line_to(p0); },
+                    Segment::Bezier2{p0, p1} => { pb.quad_to(p0, p1); },
+                    Segment::Bezier3{p0, p1, p2} => { pb.cubic_to(p0, p1, p2); },
+                }
+            }
+        }
+        pb.build()
+    }
+}
+
+impl FontFace {
+    /// Returns a reference to the glyph corresponding to `c`.
+    /// If the glyph wasn't already cached it is added to the cache.
+    fn get_glyph(&mut self, c: char) -> &Glyph {
+        self.glyphs.entry(c).or_insert( {
+            let lib = Library::init().unwrap();
+            let face = lib.new_face(&self.path, 0).unwrap();
+            face.load_char(c.clone() as usize, LoadFlag::NO_SCALE).unwrap();
+            Glyph::from(face.glyph())
+        })
+    }
+
+    /// Populates the cache with the glyphs corresponding to `chars`.
+    fn ensure_in_cache(&mut self, chars: &[char]) {
+        let lib = Library::init().unwrap();
+        let face = lib.new_face(&self.path, 0).unwrap();
+        for c in chars {
+            if !self.glyphs.contains_key(c)
+            {
+                face.load_char(c.clone() as usize, LoadFlag::NO_SCALE).unwrap();
+                self.glyphs.insert(c.clone(), Glyph::from(face.glyph()));
+            }
+        }
+    }
+}
+
 /// A class for efficiently generating training data.
-#[pyclass(unsendable)]
+#[pyclass]
 struct RustRenderer {
-    gl_context: Context<PossiblyCurrent>,
-    canvas: Canvas<OpenGl>,
-    fonts: Vec<FontId>,
+    fonts: Vec<FontFace>,
     img_size: u32,
 }
 
 #[pymethods]
 impl RustRenderer {
     #[new]
-    fn new(img_size: u32, font_paths: Vec<String>) -> Self {
+    fn new(img_size: u32, font_paths: Vec<String>) -> PyResult<Self> {
         assert!(font_paths.len() > 0);
-        // Create our OpenGL context using glutin.
-        // It would be really nice if we could create this context using the CPU's integrated GPU
-        // instead of using the main dedicated GPU where the model training will be happening.
-        let event_loop = EventLoop::new();
-        let gl_context = ContextBuilder::new()
-            .with_vsync(false)
-            .with_multisampling(16)
-            .build_headless(&event_loop, PhysicalSize::new(img_size, img_size)).unwrap();
-        let gl_context = unsafe { gl_context.make_current().unwrap() };
 
-        // Set up our femtovg canvas
-        let renderer = OpenGl::new(|s| gl_context.get_proc_address(s) as *const _).unwrap();
-        let mut canvas = Canvas::new(renderer).unwrap();
-        canvas.set_size(img_size, img_size, 1.0);  // dpi doesn't matter so we set it to 1.0
-
-        // Initialize fonts
-        let fonts = font_paths.iter().map(|path| canvas.add_font(path).unwrap()).collect();
-
-        RustRenderer {
-            gl_context,
-            canvas,
-            fonts,
-            img_size
-        }
-    }
-
-    fn render<'a>(&mut self, py: Python<'a>, kanji: String, font_size: f32, angle: f32) -> PyResult<&'a PyArray<f32, ndarray::Dim<[usize; 2]>>> {
-        let mut rng = rand::thread_rng();
-        self.canvas.reset();
-        self.canvas.clear_rect(0, 0, self.img_size, self.img_size, Color::rgb(255, 255, 255));
-
-        let sizef = self.img_size as f32;
-
-        // set up transforms so that we're working in a more sensible coordinate space
-        // (0,0) is the middle of our image
-        self.canvas.translate(sizef / 2.0, sizef / 2.0);
-
-        // draw a whole bunch of random shapes to add noise to the image.
-        for _ in 0..rng.gen_range(1..100) {
-            let x = (rng.gen::<f32>() - 0.5) * sizef * 2.0;
-            let y = (rng.gen::<f32>() - 0.5) * sizef * 2.0;
-            let sx = (rng.gen::<f32>() - 0.5) * sizef * 2.0;
-            let sy = (rng.gen::<f32>() - 0.5) * sizef * 2.0;
-            let mut paint = Paint::color(Color::rgba(0, 0, 0, rng.gen()));
-            paint.set_line_width(rng.gen_range(1.0..5.0));
-            let mut path = Path::new();
-            match rng.gen_range::<u8, _>(0..5) {
-                0 => {
-                    path.move_to(x, y);
-                    path.line_to(sx, sy);
-                    self.canvas.stroke_path(&mut path, paint);
+        // Check that all our fonts are valid.
+        // It's better to throw an exception as soon as we receive the invalid path(s) from Python
+        let mut fonts = vec![];
+        let lib = Library::init().unwrap();
+        for path in font_paths {
+            println!("Trying font at: {}", &path);
+            match lib.new_face(&path, 0) {
+                Err(_) => {
+                    return Err(exceptions::PyValueError::new_err(
+                        format!("Failed to load the font at: {}", &path)
+                    ))
                 },
-                1 => {
-                    path.ellipse(x, y, sx, sy);
-                    self.canvas.stroke_path(&mut path, paint);
-                },
-                2 => {
-                    path.ellipse(x, y, sx, sy);
-                    self.canvas.fill_path(&mut path, paint);
-                },
-                3 => {
-                    path.rect(x, y, sx, sy);
-                    self.canvas.stroke_path(&mut path, paint);
-                },
-                4 => {
-                    path.rect(x, y, sx, sy);
-                    self.canvas.fill_path(&mut path, paint);
-                },
-                _ => {},
+                Ok(face) => {
+                    fonts.push(FontFace {
+                        path,
+                        em_size: face.em_size() as f64,
+                        glyphs: HashMap::new(),
+                    });
+                }
             }
         }
 
-        // draw a circle in 50% white so we're sure the kanji will be at least somewhat visible
-        let mut path = Path::new();
-        let radius = rng.gen_range(font_size..sizef) / 2.0;
-        let paint = Paint::color(Color::rgba(255, 255, 255, rng.gen_range(128..=255)));
-        path.circle(0.0, 0.0, radius);
-        self.canvas.fill_path(&mut path, paint);
+        Ok(RustRenderer {
+            fonts,
+            img_size
+        })
+    }
 
-        // rotate only the rendered text
-        // we don't want the model learning to estimate the rotation by looking at the background clutter
-        self.canvas.rotate(angle);
+    fn populate_cache(&mut self, chars: Vec<char>) -> PyResult<()> {
+        for font in self.fonts.iter_mut() {
+            font.ensure_in_cache(chars.as_slice());
+        }
+        Ok(())
+    }
 
-        let font_index: usize = rng.gen_range(0..self.fonts.len());
-        let mut paint = Paint::color(Color::black());
-        paint.set_font(&[self.fonts[font_index]]);
-        paint.set_font_size(font_size);
-        paint.set_text_baseline(Baseline::Middle);
-        paint.set_text_align(Align::Center);
-        self.canvas.fill_text(0.0, 0.0, kanji, paint).unwrap();
+    /// Draw a glyph using a random font, with the specified size (pixels) and angle (radians).
+    fn render<'a>(&mut self, py: Python<'a>, kanji: String, font_size: f64, angle: f64) -> PyResult<&'a PyArray<f32, ndarray::Dim<[usize; 2]>>> {
+        let mut rng = rand::thread_rng();
 
-        // finish sending draw commands and render everything
-        self.canvas.flush();
+        let rasterizer = SignedDifferenceRasterizer::default();
+        let fill_rule = FillRule::default();
+        let black = LinColor::new(0.0, 0.0, 0.0, 1.0);
+        let white = LinColor::new(1.0, 1.0, 1.0, 1.0);
+        let size64 = self.img_size as f64;
 
-        let image = self.canvas.screenshot().unwrap();
-        let pixels = Array1::from_iter(image.pixels().map(|pixel| pixel.r as f32 / 255.0));
+        let mut img = Layer::new(
+            BBox::new((0.0, 0.0), (size64, size64)),
+            Some(white),
+        );
+
+        //println!("image size: {}, {}", img.width(), img.height());
+        //println!("img.data().len(): {}", img.data().len());
+        //println!("row_offset: {}", img.shape().offset(img.height()-1, 0));
+
+        let transform = Transform::new_scale(size64, size64);
+
+        // draw a whole bunch of random shapes to add noise to the image.
+        for _ in 0..rng.gen_range(1..20) {
+            let p1 = Point::new(rng.gen(), rng.gen());
+            let color = black.with_alpha(rng.gen());
+            let mut pb = PathBuilder::new();
+            pb.move_to(p1);
+            let stroke: bool;
+            match rng.gen_range::<u8, _>(0..3) {
+                // line
+                0 => {
+                    let p2 = Point::new(rng.gen(), rng.gen());
+                    pb.line_to(p2);
+                    stroke = true;
+                },
+                // circle
+                1 => {
+                    let radius = rng.gen::<f64>() * 0.5;
+                    pb.circle(radius);
+                    stroke = rng.gen();
+                },
+                // polygon
+                2 => {
+                    for _ in 0..3 {
+                        let p = Point::new(rng.gen(), rng.gen());
+                        pb.line_to(p);
+                    }
+                    pb.line_to(p1);
+                    stroke = rng.gen();
+                },
+                _ => {
+                    stroke = false;
+                },
+            }
+            let mut path = pb.build();
+            if stroke {
+                let style = StrokeStyle {
+                    width: rng.gen_range(0.05..0.2),
+                    line_join: LineJoin::Bevel,
+                    line_cap: LineCap::Butt
+                };
+                path = path.stroke(style);
+            }
+            img = path.fill(&rasterizer,transform, fill_rule,color, img);
+        }
+
+        let jitter_x = rng.gen_range(-0.1..0.1);
+        let jitter_y = rng.gen_range(-0.1..0.1);
+
+        let transform = transform
+            .pre_translate(jitter_x, jitter_y)
+            .pre_translate(0.5, 0.5)
+            .pre_rotate(angle)
+            .pre_translate(-0.5, -0.5);
+
+        // Draw a semi-transparent white circle to improve the contrast of our text
+        let radius = rng.gen_range((font_size/(size64*2.0))..0.7);
+        let color = white.with_alpha(rng.gen_range(0.5..1.0));
+        let mut pb = PathBuilder::new();
+        pb.move_to((0.5, 0.5));
+        pb.circle(radius);
+        let path = pb.build();
+        img = path.fill(
+            &rasterizer,
+            transform,
+            fill_rule,
+            color,
+            img
+        );
+
+        // Draw the glyph
+        let font = self.fonts.choose_mut(&mut rng).unwrap();
+        let font_scale = font_size / (size64 * font.em_size);
+        let char = kanji.chars().next().unwrap();
+        let glyph= font.get_glyph(char);
+
+        //println!("width, height: {}, {}", glyph.width, glyph.height);
+        //println!("HBX, HBY: {}, {}", glyph.hbx, glyph.hby);
+        let offset_x = (1.0 - (glyph.width * font_scale)) / 2.0 - glyph.hbx * font_scale;
+        let offset_y = (1.0 - (glyph.height * font_scale)) / 2.0 + (glyph.height - glyph.hby) * font_scale;
+
+        // The transform steps are listed in reverse order
+        let transform = transform
+            .pre_translate(offset_x, 1.0 - offset_y)
+            .pre_scale(font_scale, -font_scale);
+        let color = black.with_alpha(rng.gen_range(0.5..1.0));
+
+        let path = glyph.to_path();
+        img = path.fill(&rasterizer, transform, fill_rule, color, img);
+
+        //println!("image size: {}, {}", img.width(), img.height());
+        let pixels = Array1::from_iter(img.iter().map(|px| px.red() as f32));
         let result = pixels.to_shape((self.img_size as usize, self.img_size as usize)).unwrap();
         Ok(result.to_pyarray(py))
     }
-}
-
-
-
-/// Returns a 2D numpy array containing an image.
-#[pyfunction]
-fn render_gl(py: Python) -> PyResult<&PyArray<f32, ndarray::Dim<[usize; 2]>>> {
-    let width: u32 = 256;
-    let height: u32 = 256;
-
-    // Create our OpenGL context using glutin.
-    let el = EventLoop::new();
-    let context = ContextBuilder::new()
-        .with_vsync(false)
-        .with_multisampling(16)
-        .build_headless(&el, PhysicalSize::new(width, height)).unwrap();
-    let context = unsafe { context.make_current().unwrap() };
-
-    // Set up our femtovg canvas
-    let renderer = OpenGl::new(|s| context.get_proc_address(s) as *const _).unwrap();
-    let mut canvas = Canvas::new(renderer).unwrap();
-    canvas.set_size(width, height,1.0);  // dpi doesn't matter so we set it to 1.0
-
-    // Initialize fonts
-    let font_id = canvas.add_font("fonts/NotoSansJP-Bold.otf").unwrap();
-
-    // ----- DRAWING STARTS HERE -----
-    canvas.clear_rect(0, 0, width, height, Color::rgb(255, 255, 255));
-
-    // set up transforms so that we're working in a more sensible coordinate space
-    // (0,0) is the middle of our image
-    // also apply any rotation at this stage
-    canvas.translate(width as f32 / 2.0, height as f32 / 2.0);
-    canvas.rotate(std::f32::consts::PI / 4.0);
-
-    let mut path = Path::new();
-    path.circle(0.0, 0.0, 116.0);
-    canvas.fill_path(&mut path, Paint::color(Color::rgba(200, 200, 200, 255)));
-    let mut line = Paint::color(Color::rgba(32, 32, 32, 255));
-    line.set_line_width(5.0);
-    canvas.stroke_path(&mut path, line);
-
-    let mut paint = Paint::color(Color::black());
-    paint.set_font(&[font_id]);
-    paint.set_font_size(100.0);
-    paint.set_text_baseline(Baseline::Middle);
-    paint.set_text_align(Align::Center);
-    canvas.fill_text(0.0, 0.0, "漢字", paint).unwrap();
-
-    // finish sending draw commands and render everything
-    canvas.flush();
-
-    let image = canvas.screenshot().unwrap();
-    let pixels = Array1::from_iter(image.pixels().map(|pixel| pixel.r as f32 / 255.0));
-    let result = pixels.to_shape((width as usize, height as usize)).unwrap();
-    Ok(result.to_pyarray(py))
 }
 
 /// A Python module implemented in Rust. The name of this function must match
@@ -183,6 +294,5 @@ fn render_gl(py: Python) -> PyResult<&PyArray<f32, ndarray::Dim<[usize; 2]>>> {
 #[pymodule]
 fn datagen(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<RustRenderer>()?;
-    m.add_function(wrap_pyfunction!(render_gl, m)?)?;
     Ok(())
 }

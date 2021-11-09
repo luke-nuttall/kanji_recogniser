@@ -12,9 +12,11 @@ crate-type = ["cdylib"]
 [dependencies]
 numpy = "0.14.1"
 ndarray = "0.15.3"
-glutin = "0.27.0"
-femtovg = "0.2.8"
 rand = "0.8.4"
+font = "0.4.0"
+# Using a github link for rasterize until the fix for a panic-inducing bug makes it into a release
+rasterize = { git = "https://github.com/aslpavel/rasterize" }
+freetype-rs = "0.28.0"
 
 [dependencies.pyo3]
 version = "0.14.5"
