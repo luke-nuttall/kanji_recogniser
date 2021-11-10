@@ -8,7 +8,7 @@ import tensorflow as tf
 
 from globals import ALL_FONTS, ALL_KANJI, IMG_SIZE
 from models import build_recogniser
-from pipeline import Provider, ProviderMultithread, ProviderMultiprocess
+from pipeline import Provider, ProviderMultithread, ProviderMultiprocess, ProviderRust
 from training import train_curriculum, train_simple
 
 # This is so that Japanese kanji can be used in titles and labels on matplotlib graphs
@@ -53,8 +53,8 @@ def main():
     group = parser.add_mutually_exclusive_group()
     group.add_argument("-n", "--notrain", action="store_true",
                        help="No training will occur. The model will be loaded from the last saved copy.")
-    group.add_argument("-t", "--train", choices=["simple", "thread", "process"], default="process",
-                       help="Controls the mode used to train the mode. If not specified the fastest mode will be used.")
+    group.add_argument("-t", "--train", choices=["simple", "thread", "process", "rust"], default="process",
+                       help="Controls the training data pipeline. If not specified the fastest mode will be used.")
 
     parser.add_argument("-c", "--curriculum", action="store_true",
                         help="Use curriculum learning. The model will start by learning the first 100 kanji, then "
@@ -73,6 +73,9 @@ def main():
     elif args.train == "process":
         provider = ProviderMultiprocess(ALL_KANJI, ALL_FONTS)
         save_dir = Path("save") / "multiprocess"
+    elif args.train == "rust":
+        provider = ProviderRust(ALL_KANJI, ALL_FONTS)
+        save_dir = Path("save") / "rust"
     else:
         provider = ProviderMultiprocess(ALL_KANJI, ALL_FONTS)
         save_dir = Path("save") / "multiprocess"

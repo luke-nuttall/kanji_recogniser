@@ -2,11 +2,14 @@ import multiprocessing as mp
 import threading
 from collections import namedtuple
 import queue  # for queue.Full and queue.Empty exceptions used by mp.Queue
+from math import pi
+from random import choice, randint, random
 
 import tensorflow as tf
 
-from rendering import gen_training_sample
-from globals import IMG_SIZE
+from rendering import gen_training_sample, TrainingSample
+from globals import IMG_SIZE, ALL_KANJI, KANJI_INDICES, CATEGORIES_ANGLE
+import datagen
 
 
 def get_dataset_from_generator(gen):
@@ -79,8 +82,8 @@ class Provider:
     See the other subclasses for faster algorithms.
     """
     def __init__(self, kanji: list, fonts: list):
-        self.__kanji = kanji
-        self.__fonts = fonts
+        self._kanji = kanji
+        self._fonts = fonts
 
     def start_background_tasks(self):
         """
@@ -97,15 +100,38 @@ class Provider:
 
     @property
     def kanji(self):
-        return self.__kanji
+        return self._kanji
 
     @kanji.setter
     def kanji(self, values):
-        self.__kanji = values
+        self._kanji = values
 
     def __generator(self):
         while True:
-            yield gen_training_sample(self.__kanji, self.__fonts)
+            yield gen_training_sample(self._kanji, self._fonts)
+
+    def get_dataset(self) -> tf.data.Dataset:
+        return get_dataset_from_generator(self.__generator)
+
+
+class ProviderRust(Provider):
+    def __init__(self, kanji: list, fonts: list):
+        super().__init__(kanji, fonts)
+        self.renderer = datagen.RustRenderer(IMG_SIZE, [str(x) for x in fonts], ALL_KANJI, CATEGORIES_ANGLE)
+
+    @property
+    def kanji(self):
+        return self.renderer.kanji
+
+    @kanji.setter
+    def kanji(self, values):
+        self.renderer.kanji = values
+        # print("Set kanji to:", "".join(self.renderer.kanji))
+
+    def __generator(self):
+        while True:
+            for sample in self.renderer.render_batch(16):
+                yield TrainingSample(*sample)
 
     def get_dataset(self) -> tf.data.Dataset:
         return get_dataset_from_generator(self.__generator)
