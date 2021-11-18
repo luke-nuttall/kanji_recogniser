@@ -192,7 +192,7 @@ def main():
         pred = m_kanji.predict(inpt)
         prediction = ALL_KANJI[np.argmax(pred[0])]
         ground_truth = ALL_KANJI[kanji]
-        print(f"Prediction: {prediction} ({prediction == ground_truth})")
+        print(f"Prediction: {ground_truth} -> {prediction} ({prediction == ground_truth})")
 
         n_total = len(activations)
         n_cols = 16
