@@ -53,7 +53,7 @@ def main():
     group = parser.add_mutually_exclusive_group()
     group.add_argument("-n", "--notrain", action="store_true",
                        help="No training will occur. The model will be loaded from the last saved copy.")
-    group.add_argument("-t", "--train", choices=["simple", "thread", "process", "rust"], default="process",
+    group.add_argument("-t", "--train", choices=["simple", "thread", "process", "rust"], default="rust",
                        help="Controls the training data pipeline. If not specified the fastest mode will be used.")
 
     parser.add_argument("-c", "--curriculum", action="store_true",
