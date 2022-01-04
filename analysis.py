@@ -10,7 +10,7 @@ from rendering import gen_training_sample
 
 def plot_accuracy_comparison():
     save_dir = Path("save")
-    saves = [(save_dir / "multiprocess", "Curriculum"),
+    saves = [(save_dir / "rust", "Curriculum"),
              (save_dir / "shuffle", "Shuffled Curriculum"),
              (save_dir / "no_curriculum", "No Curriculum")]
 

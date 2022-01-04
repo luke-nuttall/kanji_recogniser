@@ -92,10 +92,12 @@ def train_schedule(model: tf.keras.Model, provider: Provider, schedule: list):
 
 def train_simple(model: tf.keras.Model, provider: Provider):
     schedule = [
-        {"n_epochs": 25, "batch_size": 16, "n_batches": 2000, "learning_rate": 0.001, "kanji": ALL_KANJI},
-        {"n_epochs": 25, "batch_size": 32, "n_batches": 1000},
+        {"n_epochs": 25, "batch_size": 32, "n_batches": 1000, "learning_rate": 0.001, "kanji": ALL_KANJI},
         {"n_epochs": 25, "batch_size": 64, "n_batches": 500},
         {"n_epochs": 25, "batch_size": 128, "n_batches": 250},
+        {"n_epochs": 25, "learning_rate": 0.0005},
+        # Increasing the batch size above 128 causes it to sometimes run out of memory on my GPU
+        # If you've got a GPU with more than 2GB of memory then it should be safe to use even larger batches
     ]
     return train_schedule(model, provider, schedule)
 
@@ -110,13 +112,13 @@ def train_curriculum(model: tf.keras.Model, provider: Provider, shuffle=False):
     for n_kanji in range(100, CATEGORIES_KANJI + 1, 100):
         schedule.append({
             "n_epochs": 1,
-            "batch_size": 16,
-            "n_batches": 2000,
+            "batch_size": 32,
+            "n_batches": 1000,
             "learning_rate": 0.001,
             "kanji": all_kanji[:n_kanji]
         })
-    schedule.append({"n_epochs": 25, "batch_size": 32, "n_batches": 1000})
     schedule.append({"n_epochs": 25, "batch_size": 64, "n_batches": 500})
     schedule.append({"n_epochs": 25, "batch_size": 128, "n_batches": 250})
+    schedule.append({"n_epochs": 25, "learning_rate": 0.0005})
 
     return train_schedule(model, provider, schedule)
