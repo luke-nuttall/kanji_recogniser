@@ -152,9 +152,9 @@ struct RustRenderer {
 impl RustRenderer {
     fn render_raw(&self) -> TrainingSample {
         let mut rng = rand::thread_rng();
-        let char = self.kanji.choose(&mut rng).unwrap();
-        let kanji_index = self.category_map[char];
-        let font_size = rng.gen_range(16.0..24.0);
+        let kanji_char = self.kanji.choose(&mut rng).unwrap();
+        let kanji_index = self.category_map[kanji_char];
+        let font_size = rng.gen_range(16.0..28.0);
         let angle_category = 0;
         let n_angles = self.angle_categories as f64;
         let angle_mid = 2.0 * PI * (angle_category as f64) / n_angles;
@@ -233,12 +233,14 @@ impl RustRenderer {
             .pre_rotate(angle)
             .pre_translate(-0.5, -0.5);
 
-        // Draw a semi-transparent white circle to improve the contrast of our text
-        let radius = rng.gen_range((font_size/(size64*2.0))..0.7);
+        // Put a semitransparent layer of white over the background clutter to improve contrast
         let color = white.with_alpha(rng.gen_range(0.5..1.0));
         let mut pb = PathBuilder::new();
-        pb.move_to((0.5, 0.5));
-        pb.circle(radius);
+        pb.move_to((0.0, 0.0));
+        pb.line_to((1.0, 0.0));
+        pb.line_to((1.0, 1.0));
+        pb.line_to((0.0, 1.0));
+        pb.line_to((0.0, 0.0));
         let path = pb.build();
         img = path.fill(
             &rasterizer,
@@ -248,25 +250,45 @@ impl RustRenderer {
             img
         );
 
-        // Draw the glyph
+        // Choose font
         let font = self.fonts.choose(&mut rng).unwrap();
+        // font_scale converts font units (approx. 0..1000) into image coordinates (0..1)
         let font_scale = font_size / (size64 * font.em_size);
-        let glyph= font.get_cached_glyph(char);
-
-        //println!("width, height: {}, {}", glyph.width, glyph.height);
-        //println!("HBX, HBY: {}, {}", glyph.hbx, glyph.hby);
-        let offset_x = (1.0 - (glyph.width * font_scale)) / 2.0 - glyph.hbx * font_scale;
-        let offset_y = (1.0 - (glyph.height * font_scale)) / 2.0 + (glyph.height - glyph.hby) * font_scale;
-
-        // The transform steps are listed in reverse order
-        let transform = transform
-            .pre_translate(offset_x, 1.0 - offset_y)
-            .pre_scale(font_scale, -font_scale);
+        let spacing = 1.1 * font_size / size64;
         let color = black.with_alpha(rng.gen_range(0.5..1.0));
 
-        let path = glyph.to_path();
-        img = path.fill(&rasterizer, transform, fill_rule, color, img);
 
+        // Set up a 3x3 grid of glyphs, some of which may be blank
+        for jj in -1..2 {
+            for ii in -1..2 {
+                let char = if (jj==0) & (ii==0) {
+                    kanji_char
+                } else {
+                    if rng.gen_bool(0.8) {
+                        self.kanji.choose(&mut rng).unwrap()
+                    } else {
+                        continue;
+                    }
+                };
+                let glyph = font.get_cached_glyph(char);
+
+                // offsets for the 0,0 point on the glyph, in image coordinates
+                let offset_x = (0.5 - (glyph.width * font_scale)/2.0) - glyph.hbx * font_scale;
+                let offset_y = (0.5 - (glyph.height * font_scale)/2.0) + (glyph.height - glyph.hby) * font_scale;
+
+                // The transform steps are listed in reverse order
+                let transform = transform
+                    .pre_translate(offset_x + (ii as f64) * spacing,
+                                   1.0 - offset_y + (jj as f64) * spacing)
+                    .pre_scale(font_scale, -font_scale);
+
+                // Draw the glyph
+                let path = glyph.to_path();
+                img = path.fill(&rasterizer, transform, fill_rule, color, img);
+            }
+        }
+
+        // Convert the image to an array of floats
         let shape = (self.img_size as usize, self.img_size as usize);
         let pixels = Array2::from_shape_vec(
             shape, img.iter().map(|px| px.red() as f32).collect()
